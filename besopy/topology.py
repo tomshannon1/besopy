@@ -35,7 +35,7 @@ class Topology:
     def get_num_nodes(self): return self.num_nodes
 
     def brick_coordinates(self):
-        coordinates = np.zeros((self.num_elements, DEGREES_OF_FREEDOM))
+        coordinates = np.zeros((self.num_nodes, DEGREES_OF_FREEDOM))
 
         dx, dy, dz = self.length / self.x, self.width / self.y, self.height / self.z
 
@@ -54,7 +54,7 @@ class Topology:
         for element in range(self.num_elements):
             elx = element / (self.y * self.z) + 1
             ely = (element - (elx - 1) * self.y * self.z) / self.z + 1
-            elz = z if np.mod(element, self.z) == 0 else np.mod(element, self.z)
+            elz = self.z if np.mod(element, self.z) == 0 else np.mod(element, self.z)
             elz = 0 if element == 0 else elz
 
             connections[element][0] = self.y * self.z * (elx - 1) + (ely - 1) * self.z + elz
