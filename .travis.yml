@@ -2,8 +2,8 @@ python:
   - "3.7"
 # command to install dependencies
 install:
-  - pip install numpy
-  - pip install unittest
+  - pip3 install numpy
+  - pip3 install unittest
 script: python test/topology_test.py
 branches:
   only:
