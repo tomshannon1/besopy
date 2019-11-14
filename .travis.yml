@@ -1,0 +1,7 @@
+python:
+  - "3.7"
+# command to install dependencies
+script: python test/topology_test.py
+branches:
+  only:
+    - master
