@@ -7,7 +7,7 @@ matrix:
 install:
   - pip3 install numpy
 
-script: python test/topology_test.py
+script: python -m unittest tests/topology_test.py
 
 branches:
   only:
