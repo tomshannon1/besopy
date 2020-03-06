@@ -21,7 +21,7 @@ This is an animation of the design process. This design process starts with a 3D
 
 ## Future work
 
-This software is quite resource intensive, depending on the number of elements used in the design. Therefore, this software would highly benefit from running on a distributed cluster like Google Dataproc or AWS EMR. 
+This software is quite resource intensive, depending on the number of elements used in the design. Therefore, this software would highly benefit from running on a distributed cluster like Google Dataproc or AWS EMR. Additionally, this could benefit by using sparse matrices. In the past, I have tried to refactor to make it work with sparse matrices, but the solvers did not produce the correct output and made physically incorrect designs.  
 
 ## Contributers
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
