@@ -1,6 +1,14 @@
 # besopy
-Bi-directional Evolutionary Structure Optimization
-
 [![Build Status](https://travis-ci.org/tomshannon1/besopy.svg?branch=master)](https://travis-ci.org/tomshannon1/besopy)
 
-![](https://lh6.googleusercontent.com/w3bY1uCfacg6dtadv0kjLqBv6_srCsDfL5-wGSmNVUGUlAAkzM3ktf9j7yQ_e43cHBnUfMLz3u4Hw357oZ4bJGKPXOeHWQXK7Y54rwI5Ipp8QuDFziJoqi8WCO8vMp45qnS7SBksYwQ)
+This a topology optimization library that uses a bi-directional evolutionary structure optimization (BESO) method to try to design the most optimal structures. You can learn more about this method and topology optimization in my undergraduate thesis: [A comparison of topology optimization methods for the design of a cantilever beam]().
+
+
+------------
+
+<p>
+    <img src="https://lh3.google.com/u/0/d/13q38NCBbRYgzUDL7VuiaGqJGFLwE5fHW=s2048" alt="dominating_sets_example2"/>
+    <center>Three-dimensional cantilever beam design process at 15% volume fraction (40 x 12 x 20) </center>
+</p>
+------------
+
