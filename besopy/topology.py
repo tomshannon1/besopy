@@ -13,10 +13,15 @@ class Topology:
         each dimension for the initial design.
 
         length:argument - Length of design space
+
         width:argument - Width of design space
+
         height:argument - Height of design space
+
         x:argument - Number of x elements in initial design
+
         y:argument - Number of y elements in initial design
+
         z:argument - Number of z elements in initial design """
 
     def __init__(self, length, width, height, x, y, z):
