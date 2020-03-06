@@ -11,6 +11,10 @@ Below is an example of a cantilever beam generated with this optimization proces
 
 ------------
 
+![](images/final-design.svg)
+
+------------
+
 ## Contributers
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
