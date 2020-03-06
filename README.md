@@ -7,13 +7,21 @@ Below is an example of a cantilever beam generated with this optimization proces
 
 ------------
 
-![](https://lh6.googleusercontent.com/w3bY1uCfacg6dtadv0kjLqBv6_srCsDfL5-wGSmNVUGUlAAkzM3ktf9j7yQ_e43cHBnUfMLz3u4Hw357oZ4bJGKPXOeHWQXK7Y54rwI5Ipp8QuDFziJoqi8WCO8vMp45qnS7SBksYwQ)
-
-------------
-
 ![](images/final-images.png?raw=true)
 
+This is a final three-dimensional design of a cantilever designed from this optimization method. The software exports VTK files for every design iteration for easier computations and faster export times. However, the user can then modify these files with software, such as Paraview, to make the design look like the model above and suitable for 3D printing. The above image has a poisson surface recontruction filter to smooth jagged edges of the VTK file. A simple marching cubes algorithm could also be used for a similar effect.
+ 
 ------------
+
+![](https://lh6.googleusercontent.com/w3bY1uCfacg6dtadv0kjLqBv6_srCsDfL5-wGSmNVUGUlAAkzM3ktf9j7yQ_e43cHBnUfMLz3u4Hw357oZ4bJGKPXOeHWQXK7Y54rwI5Ipp8QuDFziJoqi8WCO8vMp45qnS7SBksYwQ)
+
+This is an animation of the design process. This design process starts with a 3D grid of voxel elements, composed of eight nodal points. The user specifies the nodal points on which a given load on the structure is placed. Based on this load, the optimization process subtracts inefficient material and adds material in place where the material is needed. You can give a particular volume fraction, which is the percentage of material to keep from the original design. This design above is a cantilever beam set to be designed at 15% volume fraction.  
+
+------------
+
+## Future work
+
+This software is quite resource intensive, depending on the number of elements used in the design. Therefore, this software would highly benefit from running on a distributed cluster like Google Dataproc or AWS EMR. 
 
 ## Contributers
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
