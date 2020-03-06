@@ -11,7 +11,7 @@ Below is an example of a cantilever beam generated with this optimization proces
 
 ------------
 
-![](images/final-design.png?raw=true)
+![](images/final-images.png?raw=true)
 
 ------------
 
