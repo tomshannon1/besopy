@@ -5,10 +5,6 @@ This a topology optimization library that uses a bi-directional evolutionary str
 
 
 ------------
-
-<p>
-    <img src="https://lh3.google.com/u/0/d/13q38NCBbRYgzUDL7VuiaGqJGFLwE5fHW=s2048" alt="dominating_sets_example2"/>
-    <center>Three-dimensional cantilever beam design process at 15% volume fraction (40 x 12 x 20) </center>
-</p>
+![](https://lh3.google.com/u/0/d/13q38NCBbRYgzUDL7VuiaGqJGFLwE5fHW=s2048)
 ------------
 
