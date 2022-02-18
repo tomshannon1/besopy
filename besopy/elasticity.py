@@ -1,19 +1,31 @@
 import numpy as np
 
-
 class ElasticityMatrix:
-    def __init__(self, poisson=1, young=1):
-        self.poisson = poisson
-        self.young = young
 
-    def get_matrix(self):
-        elasticity_factor = (self.young / ((1 + self.poisson) * (1 - 2 * self.poisson)))
+    """ ---------------------------------------------
+        Elastic Matrix for Linear Isotropic Material
 
-        return elasticity_factor * np.matrix([
-            [1 - self.poisson, self.poisson, self.poisson, 0, 0, 0],
-            [self.poisson, 1 - self.poisson, self.poisson, 0, 0, 0],
-            [self.poisson, self.poisson, 1 - self.poisson, 0, 0, 0],
-            [0, 0, 0, (1 - 2 * self.poisson) / 2, 0, 0],
-            [0, 0, 0, 0, (1 - 2 * self.poisson) / 2, 0],
-            [0, 0, 0, 0, 0, (1 - 2 * self.poisson) / 2]])
+        ν: Poisson's Ratio
+        λ: Young's Modulus  
+    ---------------------------------------------- """   
 
+    def __init__(self, ν: float = 1.0, λ: float = 1.0):
+        self.ν = ν
+        self.λ = λ
+
+    def get_matrix(self, ν: float = 1.0, λ: float = 1.0):
+  
+        elasticity_factor = (λ / ((1 + ν) * (1 - 2 * ν)))
+
+        elasticity_matrix = np.matrix([
+            [1-ν,  ν,  ν,  0,  0,  0],
+            [ν,  1-ν,  ν,  0,  0,  0],
+            [ν,  ν,  1-ν,  0,  0,  0],
+            [0,  0,  0,  1-2*ν, 0, 0],
+            [0,  0,  0,  0, 1-2*ν, 0],
+            [0,  0,  0,  0, 0, 1-2*ν]
+        ])
+
+        return elasticity_factor * elasticity_matrix
+
+print(ElasticityMatrix().get_matrix())
