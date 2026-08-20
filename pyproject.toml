@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "beso-topology"
+version = "0.1.0"
+description = "Sparse 3D topology optimization using the BESO method"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0",
+  "scikit-image>=0.26",
+  "scipy>=1.14",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.12",
+]
+
+[project.scripts]
+beso = "beso.cli:main"
+beso-surface = "beso.surface_cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/beso"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+filterwarnings = [
+  "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning:skimage.measure._marching_cubes_lewiner",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

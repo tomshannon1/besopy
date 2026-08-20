@@ -1,34 +1,131 @@
 # BESO
-## Topology Optimization for Python using Bidirectional Evolutionary Structure Optimization (BESO)
 
-This is a Python package that allows you to run 3D structural topology optimization problems using the bi-directional evolutionary structure optimization (BESO) method. This code was written based on work done for the 2D case by Xie and Huang in the book, Evolutionary Topology Optimization of Continuum Structures: Methods and Applications. You can learn more about this method and topology optimization in my undergraduate thesis: A comparison of topology optimization methods for the design of a cantilever beam.
+Sparse three-dimensional topology optimization using the
+bi-directional evolutionary structural optimization (BESO) method.
 
-Below is an example of a cantilever beam generated with this optimization process. 
+This project began as the software component of the undergraduate thesis
+_A comparison of topology optimization methods for the design of a cantilever
+beam_. The current codebase rebuilds the original prototype as an installable,
+tested Python package while preserving the thesis method.
 
-![image](https://github.com/tomshannon1/BESO/assets/18470042/515f0146-b37a-42f6-8fa9-dc86835b7850)
+![Example cantilever result](https://github.com/tomshannon1/BESO/assets/18470042/515f0146-b37a-42f6-8fa9-dc86835b7850)
 
-This is a final three-dimensional design of a cantilever designed from this optimization method. The software exports VTK files for every design iteration for easier computations and faster export times. However, the user can then modify these files with software, such as Paraview, to make the design look like the model above and suitable for 3D printing. The above image has a poisson surface recontruction filter to smooth jagged edges of the VTK file. A simple marching cubes algorithm could also be used for a similar effect.
+## What works
 
-![](https://lh6.googleusercontent.com/w3bY1uCfacg6dtadv0kjLqBv6_srCsDfL5-wGSmNVUGUlAAkzM3ktf9j7yQ_e43cHBnUfMLz3u4Hw357oZ4bJGKPXOeHWQXK7Y54rwI5Ipp8QuDFziJoqi8WCO8vMp45qnS7SBksYwQ)
+- Structured 3D meshes of eight-node hexahedral elements
+- Isotropic linear-elastic finite-element analysis with 2x2x2 Gauss integration
+- Sparse global stiffness assembly and sparse direct solution
+- Compliance-based soft-kill BESO with spatial and iteration filtering
+- A cantilever benchmark and command-line interface
+- ParaView-compatible VTK output
+- Numerical checks against Euler-Bernoulli beam theory
 
-This is an animation of the design process. This design process starts with a 3D grid of voxel elements, composed of eight nodal points. The user specifies the nodal points on which a given load on the structure is placed. Based on this load, the optimization process subtracts inefficient material and adds material in place where the material is needed. You can give a particular volume fraction, which is the percentage of material to keep from the original design. This design above is a cantilever beam set to be designed at 15% volume fraction.
+The original 2019 prototype remains in the top level of `src/` for historical
+reference. The maintained implementation is in `src/beso/`.
 
-## Future work
+## Quick start
 
-This software is quite resource intensive, depending on the number of elements used in the design. Therefore, this software would highly benefit from running on a GPU instance. Additionally, this could benefit by using sparse matrices. In the past, I have tried to refactor to make it work with sparse matrices, but the solvers did not produce the correct output and made physically incorrect designs.  
+Python 3.11 or newer is required.
 
-## Contributers
-<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
-<!-- prettier-ignore-start -->
-<!-- markdownlint-disable -->
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/tomshannon1"><img src="https://avatars3.githubusercontent.com/u/18470042?s=460&v=4" width="100px;" alt=""/><br /><sub><b>tomshannon1</b></sub></a><br />
-  </td>
-  </tr>
-</table>
-<!-- markdownlint-enable -->
-<!-- prettier-ignore-end -->
-<!-- ALL-CONTRIBUTORS-LIST:END -->
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+pytest
+beso
+```
 
-If you want to contribute, message me (@tomshannon1) or send a pull request!
+The default command optimizes a `24 x 6 x 6` cantilever to a 20% volume
+fraction. A faster example is:
+
+```bash
+beso \
+  --nelx 12 --nely 4 --nelz 4 \
+  --volume 0.30 \
+  --max-iterations 70 \
+  --output output/demo
+```
+
+For larger meshes, use a coarse-to-fine continuation. The transferred topology
+is thickened to twice the target volume before fine optimization so it can
+relocate material instead of remaining trapped at the coarse design:
+
+```bash
+beso \
+  --nelx 30 --nely 15 --nelz 8 \
+  --volume 0.15 --max-iterations 130 \
+  --coarse-factor 2 \
+  --output output/multiresolution
+```
+
+The output directory contains:
+
+- `design-solid.vtk`: solid elements only, ready to open in ParaView
+- `design.vtk`: the complete domain with a cell-density field
+- `coarse-design-solid.vtk`: the coarse result when `--coarse-factor` is used
+- `summary.json`: parameters, convergence state, displacement, compliance, and
+  detailed assembly/solve/postprocessing timing
+
+Run `beso --help` for all mesh, material, load, filter, and convergence options.
+
+## Printable STL
+
+Convert any completed output directory without rerunning the optimization:
+
+```bash
+beso-surface output/demo
+```
+
+This pads and smooths the binary density field, extracts a marching-cubes
+isosurface, applies volume-preserving Taubin smoothing, removes detached
+fragments, verifies that the result is watertight, and writes
+`design-smoothed.stl`. Use `--sigma` and `--smoothing-iterations` to control the
+finish. Physical dimensions become STL dimensions, so use millimetres when
+configuring a design intended for printing.
+
+## Validation
+
+The test suite checks mesh connectivity, element rigid-body modes, stiffness
+symmetry and positive semidefiniteness, force/displacement consistency, target
+volume selection, VTK export, and the CLI.
+
+For a `4 x 1 x 1` cantilever with `E = 1000`, the refined 3D model predicts a
+tip displacement within 5% of the Euler-Bernoulli result:
+
+```text
+analytical: 0.256
+3D FEA:     0.258
+```
+
+This establishes a useful baseline, but does not yet constitute full
+verification of the optimizer. Published BESO benchmark geometries and
+mesh-independence studies should be added before using results for engineering
+decisions.
+
+## Current limitations
+
+- The CLI currently provides one cantilever load case and one material.
+- The optimizer returns the lowest-compliance near-target iteration because a
+  discrete voxel design cannot always represent the requested fraction exactly.
+  The actual fraction is always reported in `summary.json`.
+- Very coarse meshes can lose a load path near the target volume. Connectivity
+  constraints and non-design regions around loads and supports are the next
+  correctness priority.
+- STL watertightness is checked, but minimum wall thickness, overhangs, and
+  printer-specific tolerances still need validation in a slicer.
+- There is no graphical model editor or in-process 3D viewer yet.
+
+## Improvement roadmap
+
+1. Validate against published 3D BESO compliance and topology benchmarks.
+2. Add protected load/support regions and solid-connectivity checks.
+3. Support multiple loads, boundary-condition regions, and passive elements
+   through a versioned problem file.
+4. Add minimum-feature and manufacturing constraints to printable surfaces.
+5. Profile larger problems, add iterative solvers and preconditioning, then
+   evaluate GPU backends based on measured bottlenecks.
+6. Add an interactive viewer only after the numerical contract is stable.
+
+The sparse CPU solver is intentional: it addresses the original prototype's
+largest memory issue and provides a testable reference implementation for any
+future accelerated backend.
