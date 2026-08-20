@@ -89,8 +89,10 @@ Run `beso --help` for all mesh, material, load, filter, and convergence options.
 
 The thesis cantilever, a Xie-style bridge, a Michell space truss, and a
 torsion tower live in `examples/`. They write STL iteration history and an
-HTML viewer. The GIFs below are looping playback of those histories, rendered
-with `beso-animate`.
+HTML viewer. The GIFs below are looping playback of those histories. The
+Michell truss, torsion, and cantilever clips are screen recordings of the viewer
+(supports, loads, and the compliance / volume chart). Rebuild a raster GIF
+from STL frames with `beso-animate`.
 
 ```bash
 ./examples/cantilever.sh
