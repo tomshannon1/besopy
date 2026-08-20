@@ -8,6 +8,7 @@ from .problems import (
     bridge_load_case,
     cantilever_load_case,
     make_problem,
+    torsion_load_case,
     truss_load_case,
 )
 
@@ -22,6 +23,7 @@ __all__ = [
     "bridge_load_case",
     "cantilever_load_case",
     "make_problem",
+    "torsion_load_case",
     "truss_load_case",
 ]
 

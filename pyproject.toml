@@ -26,6 +26,7 @@ beso = "beso.cli:main"
 beso-import-stl = "beso.import_cli:main"
 beso-optimize-domain = "beso.domain_cli:main"
 beso-surface = "beso.surface_cli:main"
+beso-animate = "beso.animate:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/beso"]

@@ -6,6 +6,7 @@ from beso.problems import (
     bridge_load_case,
     make_problem,
     resolve_load_placement,
+    torsion_load_case,
     truss_load_case,
 )
 
@@ -96,6 +97,9 @@ def test_resolve_load_placement_defaults_and_rejects_cross_problem_names() -> No
         resolve_load_placement("cantilever", "convoy")
     with pytest.raises(ValueError, match="Truss load placement"):
         resolve_load_placement("truss", "convoy")
+    assert resolve_load_placement("torsion", None) == "couple"
+    with pytest.raises(ValueError, match="Torsion load placement"):
+        resolve_load_placement("torsion", "center")
 
 
 def test_truss_pins_four_corners_and_loads_the_roof_center() -> None:
@@ -151,3 +155,46 @@ def test_make_problem_truss_keeps_pin_and_load_seeds() -> None:
     assert len(problem.overlay_kwargs["support_piers"]) == 4
     assert len(problem.overlay_kwargs["story_loads"]) == 1
     assert "Michell" in problem.overlay_kwargs["story"]["load_label"]
+
+
+def test_torsion_couple_is_pure_torque_on_the_roof() -> None:
+    mesh = StructuredMesh(8, 8, 12, length=8.0, width=8.0, height=12.0)
+    load_case, stories = torsion_load_case(mesh, load=-2.0, placement="couple")
+    coords = mesh.coordinates
+    loaded = load_case.load_nodes
+    support = np.unique(load_case.fixed_dofs // 3)
+    nodal = load_case.forces.reshape(-1, 3)
+
+    assert np.allclose(coords[loaded, 2], 12.0)
+    assert np.allclose(nodal.sum(axis=0), 0.0, atol=1e-12)
+    assert len(stories) == 2
+    np.testing.assert_allclose(stories[0]["direction"], [-1.0, 0.0, 0.0])
+    np.testing.assert_allclose(stories[1]["direction"], [1.0, 0.0, 0.0])
+    ys = np.unique(np.round(coords[loaded, 1], 6))
+    assert ys.min() == pytest.approx(0.0)
+    assert ys.max() == pytest.approx(8.0)
+    assert np.allclose(coords[support, 2], 0.0)
+    assert coords[support, 0].min() == pytest.approx(0.0)
+    assert coords[support, 0].max() == pytest.approx(8.0)
+
+
+def test_torsion_spin_puts_four_tangential_roof_loads() -> None:
+    mesh = StructuredMesh(8, 8, 10, length=8.0, width=8.0, height=10.0)
+    load_case, stories = torsion_load_case(mesh, load=-1.0, placement="spin")
+    nodal = load_case.forces.reshape(-1, 3)
+    assert len(stories) == 4
+    assert np.allclose(nodal.sum(axis=0), 0.0, atol=1e-12)
+    assert np.allclose(mesh.coordinates[load_case.load_nodes, 2], 10.0)
+
+
+def test_make_problem_torsion_keeps_pin_and_couple_seeds() -> None:
+    mesh = StructuredMesh(6, 6, 8, length=6.0, width=6.0, height=8.0)
+    problem = make_problem("torsion", mesh, load=-1.0, load_placement=None)
+    assert problem.require_connectivity
+    assert not problem.prune_dead_ends
+    assert problem.passive_solid is not None
+    assert int(problem.passive_solid.sum()) == mesh.nelx * mesh.nely
+    assert len(problem.overlay_kwargs["support_piers"]) == 4
+    assert problem.overlay_kwargs["deck"]
+    assert len(problem.overlay_kwargs["story_loads"]) == 2
+    assert "TORQUE" in problem.overlay_kwargs["story"]["load_label"]

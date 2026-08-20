@@ -2,13 +2,15 @@
 
 Runnable BESO cases. They write VTK, a smoothed STL, and an HTML iteration
 viewer under `output/examples/`. Serve the output folder over HTTP to play the
-surface history.
+surface history. Looping GIFs of completed runs live in `docs/media/` and are
+embedded in the project README.
 
 ```bash
 source .venv/bin/activate
 ./examples/cantilever.sh
 ./examples/bridge.sh
 ./examples/truss.sh
+./examples/torsion.sh
 ```
 
 ## Cantilever
@@ -61,4 +63,21 @@ Other placements:
 beso --problem truss --load-placement center \
   --nelx 12 --nely 8 --nelz 8 --volume 0.18 \
   --max-iterations 60 --snapshot-every 1 --output output/examples/truss-fast
+```
+
+## Torsion
+
+A tall box on four pinned corners, with a **force couple** on a live roof
+plate: two equal-and-opposite horizontal loads at opposite side-midpoints.
+The optimizer usually answers with a helix under the cap.
+
+Other placements:
+
+- `diagonal` — the couple on opposite roof corners
+- `spin` — four tangential loads around the roof
+
+```bash
+beso --problem torsion --load-placement couple \
+  --nelx 8 --nely 8 --nelz 16 --volume 0.22 \
+  --max-iterations 70 --snapshot-every 1 --output output/examples/torsion-fast
 ```

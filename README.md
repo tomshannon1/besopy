@@ -16,7 +16,7 @@ tested Python package while preserving the thesis method.
 - Isotropic linear-elastic finite-element analysis with 2x2x2 Gauss integration
 - Sparse global stiffness assembly and sparse direct solution
 - Compliance-based soft-kill BESO with spatial and iteration filtering
-- A cantilever benchmark, a Xie-style 3D bridge, a Michell space truss, and a command-line interface
+- A cantilever benchmark, a Xie-style 3D bridge, a Michell space truss, a torsion tower, and a command-line interface
 - ParaView-compatible VTK output
 - Numerical checks against Euler-Bernoulli beam theory
 
@@ -87,22 +87,48 @@ Run `beso --help` for all mesh, material, load, filter, and convergence options.
 
 ## Examples
 
-The thesis cantilever, a Xie-style bridge, and a Michell space truss live in
-`examples/`. They write STL iteration history and an HTML viewer:
+The thesis cantilever, a Xie-style bridge, a Michell space truss, and a
+torsion tower live in `examples/`. They write STL iteration history and an
+HTML viewer. The GIFs below are looping playback of those histories, rendered
+with `beso-animate`.
 
 ```bash
 ./examples/cantilever.sh
 ./examples/bridge.sh
 ./examples/truss.sh
-python -m http.server --directory output/examples/truss 8000
+./examples/torsion.sh
+python -m http.server --directory output/examples/torsion 8000
 ```
 
+![Cantilever BESO history](docs/media/cantilever.gif)
+
+The wall at `x = 0` is clamped. The default load is the free-end **bottom-edge**.
+
+![Bridge BESO history](docs/media/bridge.gif)
+
 `--problem bridge` fixes both bottom end-edges as abutments, keeps a live
-top-layer deck, and by default puts a three-axle convoy on the centre
-roadway. `--problem truss` pins the four base corners and hangs a point load
-from the roof centre; use `--load-placement offset` or `span` for an edge
-load or two ridge joints. See `examples/README.md` for the faster smoke
-commands.
+top-layer deck, and by default puts a three-axle convoy on the centre roadway.
+
+![Truss BESO history](docs/media/truss.gif)
+
+`--problem truss` pins the four base corners and hangs a point load from the
+roof centre. Use `--load-placement offset` or `span` for an edge load or two
+ridge joints.
+
+![Torsion tower BESO history](docs/media/torsion.gif)
+
+`--problem torsion` pins the four base corners and applies a roof **force
+couple** on a live cap plate. The usual result is a helix. Use
+`--load-placement diagonal` or `spin` for opposite-corner or four-tangent
+twists.
+
+Rebuild a GIF from any history folder:
+
+```bash
+beso-animate output/examples/torsion --output docs/media/torsion.gif
+```
+
+See `examples/README.md` for faster smoke commands.
 
 
 ## Printable STL
@@ -175,7 +201,7 @@ decisions.
 
 ## Current limitations
 
-- The CLI currently provides cantilever, bridge, and truss load cases and one material.
+- The CLI currently provides cantilever, bridge, truss, and torsion load cases and one material.
 - The optimizer returns the lowest-compliance near-target iteration because a
   discrete voxel design cannot always represent the requested fraction exactly.
   The actual fraction is always reported in `summary.json`.

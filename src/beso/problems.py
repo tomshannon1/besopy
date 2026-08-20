@@ -65,17 +65,23 @@ def cantilever_load_case(
 CANTILEVER_PLACEMENTS = ("bottom-edge", "face-center")
 BRIDGE_PLACEMENTS = ("convoy", "deck", "eccentric", "midspan")
 TRUSS_PLACEMENTS = ("center", "offset", "span")
-ALL_LOAD_PLACEMENTS = CANTILEVER_PLACEMENTS + BRIDGE_PLACEMENTS + TRUSS_PLACEMENTS
+TORSION_PLACEMENTS = ("couple", "diagonal", "spin")
+ALL_LOAD_PLACEMENTS = (
+    CANTILEVER_PLACEMENTS + BRIDGE_PLACEMENTS + TRUSS_PLACEMENTS + TORSION_PLACEMENTS
+)
 _PROBLEM_PLACEMENTS = {
     "cantilever": (CANTILEVER_PLACEMENTS, "bottom-edge"),
     "bridge": (BRIDGE_PLACEMENTS, "convoy"),
     "truss": (TRUSS_PLACEMENTS, "center"),
+    "torsion": (TORSION_PLACEMENTS, "couple"),
 }
 
 
 def resolve_load_placement(problem: str, placement: str | None) -> str:
     if problem not in _PROBLEM_PLACEMENTS:
-        raise ValueError("Problem must be 'cantilever', 'bridge', or 'truss'")
+        raise ValueError(
+            "Problem must be 'cantilever', 'bridge', 'truss', or 'torsion'"
+        )
     choices, default = _PROBLEM_PLACEMENTS[problem]
     chosen = placement or default
     if chosen not in choices:
@@ -233,6 +239,48 @@ def _nodes_near(
     return np.array([int(candidates[int(np.argmin(dist))])], dtype=np.int64)
 
 
+def _corner_pin_nodes(mesh: StructuredMesh) -> NDArray[np.int64]:
+    dx, dy, _ = mesh.element_size
+    pad_radius = 1.15 * max(dx, dy)
+    corners = (
+        (0.0, 0.0),
+        (0.0, mesh.width),
+        (mesh.length, 0.0),
+        (mesh.length, mesh.width),
+    )
+    return np.unique(
+        np.concatenate(
+            [
+                _nodes_near(mesh, [x, y, 0.0], pad_radius, z=0.0)
+                for x, y in corners
+            ]
+        )
+    )
+
+
+def _directed_story_loads(
+    mesh: StructuredMesh,
+    groups: list[NDArray[np.int64]],
+    vectors: list[NDArray[np.float64]],
+    magnitudes: list[float],
+) -> list[dict]:
+    stories = []
+    for group, vector, magnitude in zip(groups, vectors, magnitudes, strict=True):
+        if len(group) == 0:
+            continue
+        direction = np.asarray(vector, dtype=float)
+        scale = float(np.linalg.norm(direction)) or 1.0
+        stories.append(
+            {
+                "position": mesh.coordinates[group].mean(axis=0).tolist(),
+                "direction": (direction / scale).tolist(),
+                "magnitude": float(abs(magnitude)),
+                "resultant": True,
+            }
+        )
+    return stories
+
+
 def truss_load_case(
     mesh: StructuredMesh,
     load: float = -1.0,
@@ -252,22 +300,8 @@ def truss_load_case(
     if placement not in TRUSS_PLACEMENTS:
         raise ValueError("Truss load placement must be 'center', 'offset', or 'span'")
     dx, dy, _ = mesh.element_size
-    pad_radius = 1.15 * max(dx, dy)
     load_radius = 0.8 * max(dx, dy)
-    corners = (
-        (0.0, 0.0),
-        (0.0, mesh.width),
-        (mesh.length, 0.0),
-        (mesh.length, mesh.width),
-    )
-    support_nodes = np.unique(
-        np.concatenate(
-            [
-                _nodes_near(mesh, [x, y, 0.0], pad_radius, z=0.0)
-                for x, y in corners
-            ]
-        )
-    )
+    support_nodes = _corner_pin_nodes(mesh)
     if placement == "offset":
         targets = [[mesh.length / 2.0, 0.0, mesh.height]]
     elif placement == "span":
@@ -296,6 +330,74 @@ def truss_load_case(
     return load_case, _group_story_loads(
         mesh, load_groups, load=load, direction=direction
     )
+
+
+def torsion_load_case(
+    mesh: StructuredMesh,
+    load: float = -1.0,
+    *,
+    placement: str = "couple",
+) -> tuple[LoadCase, list[dict]]:
+    """Four pinned corners and a roof torque, a 3D torsion tower.
+
+    ``couple`` — two opposite side-midpoints, equal-and-opposite horizontal forces.
+    ``diagonal`` — the couple on opposite roof corners.
+    ``spin`` — four tangential loads around the roof.
+    """
+
+    if placement not in TORSION_PLACEMENTS:
+        raise ValueError("Torsion load placement must be 'couple', 'diagonal', or 'spin'")
+    dx, dy, _ = mesh.element_size
+    load_radius = 0.8 * max(dx, dy)
+    height = mesh.height
+    length = mesh.length
+    width = mesh.width
+    sense = 1.0 if load >= 0.0 else -1.0
+    magnitude = abs(load)
+    if placement == "diagonal":
+        stations = [
+            ([0.0, 0.0, height], np.array([0.0, sense, 0.0])),
+            ([length, width, height], np.array([0.0, -sense, 0.0])),
+        ]
+    elif placement == "spin":
+        stations = [
+            ([0.0, width / 2.0, height], np.array([0.0, -sense, 0.0])),
+            ([length, width / 2.0, height], np.array([0.0, sense, 0.0])),
+            ([length / 2.0, 0.0, height], np.array([sense, 0.0, 0.0])),
+            ([length / 2.0, width, height], np.array([-sense, 0.0, 0.0])),
+        ]
+    else:
+        stations = [
+            ([length / 2.0, 0.0, height], np.array([sense, 0.0, 0.0])),
+            ([length / 2.0, width, height], np.array([-sense, 0.0, 0.0])),
+        ]
+    groups: list[NDArray[np.int64]] = []
+    vectors: list[NDArray[np.float64]] = []
+    magnitudes: list[float] = []
+    forces = np.zeros(mesh.num_dofs, dtype=float)
+    load_nodes: list[NDArray[np.int64]] = []
+    for target, vector in stations:
+        nodes = _nodes_near(mesh, target, load_radius, z=height)
+        groups.append(nodes)
+        vectors.append(vector.astype(float))
+        magnitudes.append(magnitude)
+        share = magnitude / len(nodes)
+        forces[3 * nodes + 0] += share * vector[0]
+        forces[3 * nodes + 1] += share * vector[1]
+        forces[3 * nodes + 2] += share * vector[2]
+        load_nodes.append(nodes)
+    loaded = np.unique(np.concatenate(load_nodes))
+    mid = loaded[len(loaded) // 2]
+    axis = int(np.argmax(np.abs(forces[3 * mid : 3 * mid + 3])))
+    load_case = LoadCase(
+        forces=forces,
+        fixed_dofs=(
+            3 * _corner_pin_nodes(mesh)[:, None] + np.arange(3, dtype=np.int64)
+        ).reshape(-1),
+        load_dof=int(3 * mid + axis),
+        load_nodes=np.asarray(loaded, dtype=np.int64),
+    )
+    return load_case, _directed_story_loads(mesh, groups, vectors, magnitudes)
 
 
 def _elements_touching(
@@ -368,6 +470,22 @@ _TRUSS_STORY = {
     "span": {
         "load_label": "RIDGE LOADS  ·  two joints",
         "caption": "Four corner pins are fixed. Two hanging masses sit on the roof ridge, like purlins on a space frame.",
+    },
+}
+
+
+_TORSION_STORY = {
+    "couple": {
+        "load_label": "TORQUE  ·  force couple",
+        "caption": "Four corner pins are fixed. A live roof plate takes the couple, and the tower twists into a helix underneath.",
+    },
+    "diagonal": {
+        "load_label": "TORQUE  ·  diagonal couple",
+        "caption": "Four corner pins are fixed. Opposite roof corners pull against each other, so the tower has to twist.",
+    },
+    "spin": {
+        "load_label": "TORQUE  ·  four tangents",
+        "caption": "Four corner pins are fixed. Four tangential roof loads spin the top like a capstan.",
     },
 }
 
@@ -490,4 +608,43 @@ def make_problem(
             require_connectivity=True,
             prune_dead_ends=True,
         )
-    raise ValueError("Problem must be 'cantilever', 'bridge', or 'truss'")
+    if name == "torsion":
+        load_case, story_loads = torsion_load_case(
+            mesh, load=load, placement=placement
+        )
+        roof = _top_layer_elements(mesh)
+        seeds = roof | _elements_touching(
+            mesh,
+            np.unique(
+                np.concatenate((load_case.load_nodes, load_case.fixed_dofs // 3))
+            ),
+        )
+        _, _, dz = mesh.element_size
+        copy = _TORSION_STORY[placement]
+        return OptimizationProblem(
+            name=name,
+            load_case=load_case,
+            overlay_kwargs={
+                "support_piers": _truss_pads(mesh),
+                "deck": {
+                    "center": [
+                        mesh.length / 2.0,
+                        mesh.width / 2.0,
+                        mesh.height,
+                    ],
+                    "size": [mesh.length * 0.92, mesh.width * 0.92, dz * 0.45],
+                },
+                "story_loads": story_loads,
+                "max_arrows": 16,
+                "story": {
+                    "support_label": "PIN SUPPORTS  ·  four corners",
+                    "load_label": copy["load_label"],
+                    "caption": copy["caption"],
+                },
+            },
+            passive_solid=roof,
+            connectivity_seeds=seeds,
+            require_connectivity=True,
+            prune_dead_ends=False,
+        )
+    raise ValueError("Problem must be 'cantilever', 'bridge', 'truss', or 'torsion'")

@@ -37,11 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--problem",
-        choices=("cantilever", "bridge", "truss"),
+        choices=("cantilever", "bridge", "truss", "torsion"),
         default="cantilever",
         help="cantilever: clamped wall and free-end load. "
         "bridge: two abutments and traffic on a live deck. "
-        "truss: four corner pins and a Michell roof load",
+        "truss: four corner pins and a Michell roof load. "
+        "torsion: four corner pins and a roof force couple",
     )
     parser.add_argument("--nelx", type=int, default=24)
     parser.add_argument("--nely", type=int, default=6)
@@ -71,7 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
         "deck spreads traffic along the roadway, eccentric loads one fascia, "
         "and midspan is the textbook single axle line. "
         "Truss defaults to a centre roof joint; offset loads one edge, "
-        "and span puts two joints on the ridge",
+        "and span puts two joints on the ridge. "
+        "Torsion defaults to a roof force couple; diagonal uses opposite "
+        "corners, and spin puts four tangential loads around the roof",
     )
     parser.add_argument("--max-iterations", type=int, default=100)
     parser.add_argument(

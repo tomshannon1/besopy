@@ -184,3 +184,43 @@ def test_cli_runs_truss_problem(tmp_path) -> None:
     assert len(history["overlay"]["support_piers"]) == 4
     assert len(history["overlay"]["story_loads"]) == 1
     assert (output / "iterations" / "000.stl").exists()
+
+
+def test_cli_runs_torsion_problem(tmp_path) -> None:
+    output = tmp_path / "torsion"
+    exit_code = main(
+        [
+            "--problem",
+            "torsion",
+            "--nelx",
+            "6",
+            "--nely",
+            "6",
+            "--nelz",
+            "8",
+            "--volume",
+            "0.5",
+            "--evolution-rate",
+            "0.5",
+            "--max-iterations",
+            "2",
+            "--snapshot-every",
+            "1",
+            "--surface-sigma",
+            "0.2",
+            "--surface-smoothing-iterations",
+            "1",
+            "--output",
+            str(output),
+            "--quiet",
+        ]
+    )
+    assert exit_code == 0
+    summary = json.loads((output / "summary.json").read_text())
+    history = json.loads((output / "history.json").read_text())
+    assert summary["problem"] == "torsion"
+    assert summary["load"]["placement"] == "couple"
+    assert len(history["overlay"]["support_piers"]) == 4
+    assert history["overlay"]["deck"]
+    assert len(history["overlay"]["story_loads"]) == 2
+    assert (output / "iterations" / "000.stl").exists()
