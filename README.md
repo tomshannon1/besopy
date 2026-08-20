@@ -16,7 +16,7 @@ tested Python package while preserving the thesis method.
 - Isotropic linear-elastic finite-element analysis with 2x2x2 Gauss integration
 - Sparse global stiffness assembly and sparse direct solution
 - Compliance-based soft-kill BESO with spatial and iteration filtering
-- A cantilever benchmark, a Xie-style 3D bridge, and a command-line interface
+- A cantilever benchmark, a Xie-style 3D bridge, a Michell space truss, and a command-line interface
 - ParaView-compatible VTK output
 - Numerical checks against Euler-Bernoulli beam theory
 
@@ -87,21 +87,22 @@ Run `beso --help` for all mesh, material, load, filter, and convergence options.
 
 ## Examples
 
-The thesis cantilever and a Xie-style bridge live in `examples/`. They write
-STL iteration history and an HTML viewer:
+The thesis cantilever, a Xie-style bridge, and a Michell space truss live in
+`examples/`. They write STL iteration history and an HTML viewer:
 
 ```bash
 ./examples/cantilever.sh
 ./examples/bridge.sh
-python -m http.server --directory output/examples/bridge 8000
+./examples/truss.sh
+python -m http.server --directory output/examples/truss 8000
 ```
 
 `--problem bridge` fixes both bottom end-edges as abutments, keeps a live
 top-layer deck, and by default puts a three-axle convoy on the centre
-roadway. The usual result is an arch or truss between the piers. Use
-`--load-placement deck` for distributed traffic, `eccentric` for a fascia
-load, or `midspan` for the textbook single axle. See `examples/README.md`
-for the faster smoke commands.
+roadway. `--problem truss` pins the four base corners and hangs a point load
+from the roof centre; use `--load-placement offset` or `span` for an edge
+load or two ridge joints. See `examples/README.md` for the faster smoke
+commands.
 
 
 ## Printable STL
@@ -174,7 +175,7 @@ decisions.
 
 ## Current limitations
 
-- The CLI currently provides cantilever and bridge load cases and one material.
+- The CLI currently provides cantilever, bridge, and truss load cases and one material.
 - The optimizer returns the lowest-compliance near-target iteration because a
   discrete voxel design cannot always represent the requested fraction exactly.
   The actual fraction is always reported in `summary.json`.

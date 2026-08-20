@@ -3,7 +3,13 @@
 from .fea import FiniteElementSolver, StaticResult
 from .mesh import StructuredMesh
 from .optimizer import BESOOptimizer, IterationRecord, OptimizationResult
-from .problems import LoadCase, bridge_load_case, cantilever_load_case, make_problem
+from .problems import (
+    LoadCase,
+    bridge_load_case,
+    cantilever_load_case,
+    make_problem,
+    truss_load_case,
+)
 
 __all__ = [
     "BESOOptimizer",
@@ -16,6 +22,7 @@ __all__ = [
     "bridge_load_case",
     "cantilever_load_case",
     "make_problem",
+    "truss_load_case",
 ]
 
 __version__ = "0.1.0"

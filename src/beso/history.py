@@ -216,11 +216,13 @@ def frame_record(
 ) -> dict:
     payload = {
         "iteration": iteration,
-        "volume_fraction": volume_fraction,
-        "compliance": compliance if record is None else record.compliance,
+        "volume_fraction": float(volume_fraction),
+        "compliance": None if record is None else float(record.compliance),
         "changed_elements": 0 if record is None else record.changed_elements,
         "stl": stl_name,
     }
+    if record is None and compliance is not None:
+        payload["compliance"] = float(compliance)
     if sensitivity is not None:
         payload["sensitivity"] = sensitivity
         payload["sensitivity_shape"] = sensitivity_shape

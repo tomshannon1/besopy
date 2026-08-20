@@ -45,6 +45,23 @@
       position: fixed; right: 20px; bottom: 142px; width: 118px; text-align: center;
       color: #9aa3ad; font-size: 11px;
     }
+    #chart-panel {
+      display: none; position: fixed; left: 16px; top: 16px; width: 340px;
+      background: rgba(12, 14, 18, 0.86); border: 1px solid #3a3f47;
+      border-radius: 12px; padding: 10px 12px 8px; backdrop-filter: blur(8px);
+      pointer-events: none; z-index: 2;
+    }
+    #chart-legend {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+      font-size: 11px; color: #c5c7cc; margin-bottom: 4px;
+    }
+    #chart-legend .swatch {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      margin-right: 5px; vertical-align: middle;
+    }
+    #chart-legend .vol { background: #90caf9; }
+    #chart-legend .comp { background: #ff8a65; }
+    #chart { display: block; width: 100%; height: 168px; }
   </style>
 </head>
 <body>
@@ -77,9 +94,17 @@
       <label><input id="show-setup" type="checkbox" checked /> Supports &amp; load</label>
       <label><input id="show-loads" type="checkbox" /> Force arrows</label>
       <label><input id="show-sens" type="checkbox" /> Node sensitivity</label>
+      <label><input id="show-chart" type="checkbox" checked /> Compliance &amp; volume</label>
       <div id="legend"><span>low</span><div class="bar"></div><span>high</span></div>
     </div>
     <div id="setup-note" class="caption">Wall = nodes fixed in place. Hanging mass = where the force is applied.</div>
+  </div>
+  <div id="chart-panel">
+    <div id="chart-legend">
+      <span><span class="swatch vol"></span>Volume fraction</span>
+      <span><span class="swatch comp"></span>Mean compliance</span>
+    </div>
+    <svg id="chart" viewBox="0 0 340 168" aria-label="Volume fraction and mean compliance versus iteration"></svg>
   </div>
   <script type="importmap">
   {
@@ -101,6 +126,9 @@
     const showSetup = document.getElementById("show-setup");
     const showLoads = document.getElementById("show-loads");
     const showSens = document.getElementById("show-sens");
+    const showChart = document.getElementById("show-chart");
+    const chartPanel = document.getElementById("chart-panel");
+    const chartSvg = document.getElementById("chart");
     const setupNote = document.getElementById("setup-note");
     const legend = document.getElementById("legend");
     const canvas = document.getElementById("c");
@@ -394,14 +422,11 @@
         ));
         overlayGroup.add(item);
       });
-      const first = piers[0];
-      const last = piers[piers.length - 1];
+      const cx = piers.reduce((sum, pier) => sum + pier.center[0], 0) / piers.length;
+      const cy = piers.reduce((sum, pier) => sum + pier.center[1], 0) / piers.length;
+      const top = Math.max(...piers.map((pier) => pier.center[2] + pier.size[2] / 2));
       const label = makeLabel(overlay.story?.support_label || "ABUTMENTS  ·  piers fixed");
-      label.position.set(
-        (first.center[0] + last.center[0]) / 2,
-        first.center[1],
-        first.center[2] + first.size[2] * 0.9 + modelSize * 0.04,
-      );
+      label.position.set(cx, cy, top + modelSize * 0.04);
       overlayGroup.add(label);
     }
 
@@ -561,6 +586,148 @@
         `compliance ${compliance}   frames ${frames.length}`;
     }
 
+    const SVG = "http://www.w3.org/2000/svg";
+    function svgEl(name, attrs = {}, text = null) {
+      const el = document.createElementNS(SVG, name);
+      Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+      if (text != null) el.textContent = text;
+      return el;
+    }
+
+    function niceTicks(min, max, count) {
+      if (!(max > min)) return [min, max === min ? min + 1 : max];
+      const span = max - min;
+      const raw = span / Math.max(1, count - 1);
+      const mag = 10 ** Math.floor(Math.log10(raw));
+      const residual = raw / mag;
+      const step = residual >= 5 ? 5 * mag : residual >= 2 ? 2 * mag : mag;
+      const start = Math.ceil(min / step - 1e-9) * step;
+      const ticks = [];
+      for (let value = start; value <= max + step * 1e-6; value += step) {
+        ticks.push(value);
+      }
+      return ticks.length ? ticks : [min, max];
+    }
+
+    function formatTick(value, kind) {
+      if (kind === "iter") return String(Math.round(value));
+      if (kind === "volume") return value.toFixed(2);
+      const abs = Math.abs(value);
+      if (abs === 0) return "0";
+      if (abs >= 100) return value.toFixed(0);
+      if (abs >= 1) return value.toFixed(2);
+      return value.toExponential(1).replace("e+", "e");
+    }
+
+    function drawChart(currentIndex) {
+      if (!showChart.checked || frames.length < 2) {
+        chartPanel.style.display = "none";
+        return;
+      }
+      chartPanel.style.display = "block";
+      while (chartSvg.firstChild) chartSvg.removeChild(chartSvg.firstChild);
+      const left = 38;
+      const top = 10;
+      const right = 288;
+      const bottom = 140;
+      const iterations = frames.map((frame) => Number(frame.iteration));
+      const volumes = frames.map((frame) => Number(frame.volume_fraction));
+      const compliances = frames.map((frame) => {
+        const value = frame.compliance;
+        return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+      });
+      const xmin = Math.min(...iterations);
+      const xmax = Math.max(...iterations);
+      const vmax = Math.max(1, ...volumes.filter(Number.isFinite), 0.01);
+      const finiteC = compliances.filter((value) => value != null);
+      const cmin = finiteC.length ? Math.min(...finiteC) : 0;
+      const cmax = finiteC.length ? Math.max(...finiteC) : 1;
+      const cpad = cmax === cmin ? Math.abs(cmax) * 0.1 || 1 : (cmax - cmin) * 0.08;
+      const cLo = cmin - cpad;
+      const cHi = cmax + cpad;
+      const xSpan = Math.max(xmax - xmin, 1);
+      const sx = (iter) => left + ((iter - xmin) / xSpan) * (right - left);
+      const syV = (vol) => bottom - (vol / vmax) * (bottom - top);
+      const syC = (comp) => bottom - ((comp - cLo) / (cHi - cLo)) * (bottom - top);
+
+      niceTicks(0, vmax, 5).forEach((tick) => {
+        const y = syV(tick);
+        chartSvg.appendChild(svgEl("line", {
+          x1: left, y1: y, x2: right, y2: y, stroke: "#3a3f47", "stroke-width": "1",
+        }));
+        chartSvg.appendChild(svgEl("text", {
+          x: left - 6, y: y + 3, fill: "#90caf9", "font-size": "9",
+          "text-anchor": "end", "font-family": "system-ui, sans-serif",
+        }, formatTick(tick, "volume")));
+      });
+      niceTicks(xmin, xmax, 5).forEach((tick) => {
+        const x = sx(tick);
+        chartSvg.appendChild(svgEl("line", {
+          x1: x, y1: top, x2: x, y2: bottom, stroke: "#2c313a", "stroke-width": "1",
+        }));
+        chartSvg.appendChild(svgEl("text", {
+          x, y: bottom + 14, fill: "#9aa3ad", "font-size": "9",
+          "text-anchor": "middle", "font-family": "system-ui, sans-serif",
+        }, formatTick(tick, "iter")));
+      });
+      if (finiteC.length) {
+        niceTicks(cLo, cHi, 4).forEach((tick) => {
+          chartSvg.appendChild(svgEl("text", {
+            x: right + 6, y: syC(tick) + 3, fill: "#ff8a65", "font-size": "9",
+            "text-anchor": "start", "font-family": "system-ui, sans-serif",
+          }, formatTick(tick, "compliance")));
+        });
+      }
+
+      const current = frames[currentIndex] || frames[0];
+      if (current) {
+        const playhead = sx(Number(current.iteration));
+        chartSvg.appendChild(svgEl("line", {
+          x1: playhead, y1: top, x2: playhead, y2: bottom,
+          stroke: "#e8eaed", "stroke-width": "1", "stroke-dasharray": "3 3", opacity: "0.45",
+        }));
+      }
+
+      const volumePoints = frames
+        .filter((frame) => Number.isFinite(Number(frame.volume_fraction)))
+        .map((frame) => `${sx(frame.iteration)},${syV(frame.volume_fraction)}`)
+        .join(" ");
+      if (volumePoints) {
+        chartSvg.appendChild(svgEl("polyline", {
+          points: volumePoints, fill: "none", stroke: "#90caf9", "stroke-width": "1.8",
+        }));
+      }
+      const compliancePoints = frames
+        .map((frame, i) => (compliances[i] == null ? null : `${sx(frame.iteration)},${syC(compliances[i])}`))
+        .filter(Boolean)
+        .join(" ");
+      if (compliancePoints) {
+        chartSvg.appendChild(svgEl("polyline", {
+          points: compliancePoints, fill: "none", stroke: "#ff8a65", "stroke-width": "1.8",
+        }));
+      }
+      frames.forEach((frame, i) => {
+        const isCurrent = i === currentIndex;
+        const radius = isCurrent ? 3.4 : 2;
+        if (Number.isFinite(Number(frame.volume_fraction))) {
+          chartSvg.appendChild(svgEl("circle", {
+            cx: sx(frame.iteration), cy: syV(frame.volume_fraction), r: radius,
+            fill: "#90caf9", stroke: isCurrent ? "#f8fafc" : "none", "stroke-width": "1",
+          }));
+        }
+        if (compliances[i] != null) {
+          chartSvg.appendChild(svgEl("circle", {
+            cx: sx(frame.iteration), cy: syC(compliances[i]), r: radius,
+            fill: "#ff8a65", stroke: isCurrent ? "#f8fafc" : "none", "stroke-width": "1",
+          }));
+        }
+      });
+      chartSvg.appendChild(svgEl("text", {
+        x: (left + right) / 2, y: 164, fill: "#9aa3ad", "font-size": "10",
+        "text-anchor": "middle", "font-family": "system-ui, sans-serif",
+      }, "iteration"));
+    }
+
     async function show(i) {
       if (!frames.length) return;
       pending = i;
@@ -578,6 +745,7 @@
       drawOverlay();
       legend.style.display = field && showSens.checked ? "flex" : "none";
       updateStats(frames[i]);
+      drawChart(i);
       const next = (i + 1) % frames.length;
       if (frames[next]) loadGeom(next);
     }
@@ -606,6 +774,7 @@
     showSetup.onchange = () => drawOverlay();
     showLoads.onchange = () => drawOverlay();
     showSens.onchange = () => show(index);
+    showChart.onchange = () => drawChart(index);
     document.querySelectorAll("[data-view]").forEach((button) => {
       button.onclick = () => setView(button.dataset.view);
     });
@@ -683,6 +852,12 @@
       showSens.disabled = true;
       showSens.parentElement.title = "This history has no sensitivity fields yet";
     }
+    const hasChart = frames.length > 1 && frames.some((frame) => frame.volume_fraction != null);
+    if (!hasChart) {
+      showChart.disabled = true;
+      showChart.checked = false;
+      showChart.parentElement.title = "This history has no volume or compliance series yet";
+    }
     slider.max = String(Math.max(0, frames.length - 1));
     await show(0);
 
@@ -695,6 +870,10 @@
         slider.max = String(Math.max(0, frames.length - 1));
         const nowHasSensitivity = frames.some((frame) => frame.sensitivity);
         if (nowHasSensitivity) showSens.disabled = false;
+        if (frames.length > 1) {
+          showChart.disabled = false;
+          drawChart(index);
+        }
       } catch (error) {
         console.warn(error);
       }

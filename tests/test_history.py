@@ -4,7 +4,22 @@ import trimesh
 
 from beso.cli import main as optimize_cantilever
 from beso.domain_cli import main as optimize_domain
+from beso.history import frame_record
 from beso.import_cli import main as import_stl
+
+
+def test_frame_record_always_includes_chart_fields() -> None:
+    blank = frame_record(
+        None, "000.stl", iteration=0, volume_fraction=1.0, compliance=None
+    )
+    assert blank["iteration"] == 0
+    assert blank["volume_fraction"] == 1.0
+    assert blank["compliance"] is None
+    filled = frame_record(
+        None, "001.stl", iteration=1, volume_fraction=0.42, compliance=1.25
+    )
+    assert filled["compliance"] == 1.25
+    assert filled["volume_fraction"] == 0.42
 
 
 def test_domain_optimize_writes_stl_history(tmp_path) -> None:
@@ -102,3 +117,10 @@ def test_cantilever_writes_stl_history(tmp_path) -> None:
     first_sens = next(frame for frame in history["frames"] if frame.get("sensitivity"))
     assert first_sens["sensitivity_shape"] == [5, 3, 3]
     assert (output / "iterations" / first_sens["sensitivity"]).exists()
+    assert all("volume_fraction" in frame for frame in history["frames"])
+    assert history["frames"][0]["volume_fraction"] == 1.0
+    assert any(frame.get("compliance") is not None for frame in history["frames"])
+    html = (output / "index.html").read_text()
+    assert 'id="show-chart"' in html
+    assert 'id="chart-panel"' in html
+    assert "drawChart" in html

@@ -64,22 +64,23 @@ def cantilever_load_case(
 
 CANTILEVER_PLACEMENTS = ("bottom-edge", "face-center")
 BRIDGE_PLACEMENTS = ("convoy", "deck", "eccentric", "midspan")
-ALL_LOAD_PLACEMENTS = CANTILEVER_PLACEMENTS + BRIDGE_PLACEMENTS
+TRUSS_PLACEMENTS = ("center", "offset", "span")
+ALL_LOAD_PLACEMENTS = CANTILEVER_PLACEMENTS + BRIDGE_PLACEMENTS + TRUSS_PLACEMENTS
+_PROBLEM_PLACEMENTS = {
+    "cantilever": (CANTILEVER_PLACEMENTS, "bottom-edge"),
+    "bridge": (BRIDGE_PLACEMENTS, "convoy"),
+    "truss": (TRUSS_PLACEMENTS, "center"),
+}
 
 
 def resolve_load_placement(problem: str, placement: str | None) -> str:
-    if problem == "cantilever":
-        chosen = placement or "bottom-edge"
-        if chosen not in CANTILEVER_PLACEMENTS:
-            raise ValueError(
-                "Cantilever load placement must be 'bottom-edge' or 'face-center'"
-            )
-        return chosen
-    chosen = placement or "convoy"
-    if chosen not in BRIDGE_PLACEMENTS:
-        raise ValueError(
-            "Bridge load placement must be 'convoy', 'deck', 'eccentric', or 'midspan'"
-        )
+    if problem not in _PROBLEM_PLACEMENTS:
+        raise ValueError("Problem must be 'cantilever', 'bridge', or 'truss'")
+    choices, default = _PROBLEM_PLACEMENTS[problem]
+    chosen = placement or default
+    if chosen not in choices:
+        names = ", ".join(repr(item) for item in choices)
+        raise ValueError(f"{problem.capitalize()} load placement must be {names}")
     return chosen
 
 
@@ -215,6 +216,88 @@ def bridge_load_case(
     )
 
 
+def _nodes_near(
+    mesh: StructuredMesh,
+    target: NDArray[np.float64] | list[float],
+    radius: float,
+    *,
+    z: float | None = None,
+) -> NDArray[np.int64]:
+    coords = mesh.coordinates
+    candidates = np.arange(mesh.num_nodes) if z is None else mesh.nodes_on_z(z)
+    delta = coords[candidates] - np.asarray(target, dtype=float)
+    dist = np.linalg.norm(delta, axis=1)
+    close = candidates[dist <= radius]
+    if close.size:
+        return np.asarray(close, dtype=np.int64)
+    return np.array([int(candidates[int(np.argmin(dist))])], dtype=np.int64)
+
+
+def truss_load_case(
+    mesh: StructuredMesh,
+    load: float = -1.0,
+    direction: int = 2,
+    *,
+    placement: str = "center",
+) -> tuple[LoadCase, list[dict]]:
+    """Four pinned corners and a roof point load, a 3D Michell space truss.
+
+    ``center`` — one joint at the centre of the top face.
+    ``offset`` — the same load on one fascia, so the frame has to take torsion.
+    ``span`` — two joints along the roof ridge.
+    """
+
+    if direction not in (0, 1, 2):
+        raise ValueError("Direction must be 0 (x), 1 (y), or 2 (z)")
+    if placement not in TRUSS_PLACEMENTS:
+        raise ValueError("Truss load placement must be 'center', 'offset', or 'span'")
+    dx, dy, _ = mesh.element_size
+    pad_radius = 1.15 * max(dx, dy)
+    load_radius = 0.8 * max(dx, dy)
+    corners = (
+        (0.0, 0.0),
+        (0.0, mesh.width),
+        (mesh.length, 0.0),
+        (mesh.length, mesh.width),
+    )
+    support_nodes = np.unique(
+        np.concatenate(
+            [
+                _nodes_near(mesh, [x, y, 0.0], pad_radius, z=0.0)
+                for x, y in corners
+            ]
+        )
+    )
+    if placement == "offset":
+        targets = [[mesh.length / 2.0, 0.0, mesh.height]]
+    elif placement == "span":
+        targets = [
+            [mesh.length * 0.35, mesh.width / 2.0, mesh.height],
+            [mesh.length * 0.65, mesh.width / 2.0, mesh.height],
+        ]
+    else:
+        targets = [[mesh.length / 2.0, mesh.width / 2.0, mesh.height]]
+    load_groups = [
+        _nodes_near(mesh, target, load_radius, z=mesh.height) for target in targets
+    ]
+    load_nodes = np.unique(np.concatenate(load_groups))
+    share = load / len(load_nodes)
+    forces = np.zeros(mesh.num_dofs, dtype=float)
+    forces[3 * load_nodes + direction] = share
+    mid = load_nodes[len(load_nodes) // 2]
+    load_case = LoadCase(
+        forces=forces,
+        fixed_dofs=(3 * support_nodes[:, None] + np.arange(3, dtype=np.int64)).reshape(
+            -1
+        ),
+        load_dof=int(3 * mid + direction),
+        load_nodes=np.asarray(load_nodes, dtype=np.int64),
+    )
+    return load_case, _group_story_loads(
+        mesh, load_groups, load=load, direction=direction
+    )
+
+
 def _elements_touching(
     mesh: StructuredMesh, nodes: NDArray[np.int64]
 ) -> NDArray[np.bool_]:
@@ -255,6 +338,40 @@ def _bridge_deck(mesh: StructuredMesh, placement: str) -> dict:
     }
 
 
+def _truss_pads(mesh: StructuredMesh) -> list[dict]:
+    dx, dy, dz = mesh.element_size
+    size = [
+        max(dx * 1.8, mesh.length * 0.06),
+        max(dy * 1.8, mesh.width * 0.06),
+        max(dz * 1.5, mesh.height * 0.08),
+    ]
+    return [
+        {"center": [x, y, size[2] / 2.0], "size": size}
+        for x, y in (
+            (0.0, 0.0),
+            (0.0, mesh.width),
+            (mesh.length, 0.0),
+            (mesh.length, mesh.width),
+        )
+    ]
+
+
+_TRUSS_STORY = {
+    "center": {
+        "load_label": "POINT LOAD  ·  Michell joint",
+        "caption": "Four corner pins are fixed. The hanging mass is a point load on the roof — a 3D Michell space truss.",
+    },
+    "offset": {
+        "load_label": "OFFSET LOAD  ·  one edge",
+        "caption": "Four corner pins are fixed. The load sits on one roof edge, so the frame has to carry torsion.",
+    },
+    "span": {
+        "load_label": "RIDGE LOADS  ·  two joints",
+        "caption": "Four corner pins are fixed. Two hanging masses sit on the roof ridge, like purlins on a space frame.",
+    },
+}
+
+
 _BRIDGE_STORY = {
     "convoy": {
         "load_label": "TRAFFIC  ·  three axles",
@@ -283,6 +400,7 @@ class OptimizationProblem:
     passive_solid: NDArray[np.bool_] | None = None
     connectivity_seeds: NDArray[np.bool_] | None = None
     require_connectivity: bool = False
+    prune_dead_ends: bool = False
 
 
 def make_problem(
@@ -342,5 +460,34 @@ def make_problem(
             passive_solid=deck,
             connectivity_seeds=seeds,
             require_connectivity=True,
+            prune_dead_ends=False,
         )
-    raise ValueError("Problem must be 'cantilever' or 'bridge'")
+    if name == "truss":
+        load_case, story_loads = truss_load_case(
+            mesh, load=load, placement=placement
+        )
+        seeds = _elements_touching(
+            mesh,
+            np.unique(
+                np.concatenate((load_case.load_nodes, load_case.fixed_dofs // 3))
+            ),
+        )
+        copy = _TRUSS_STORY[placement]
+        return OptimizationProblem(
+            name=name,
+            load_case=load_case,
+            overlay_kwargs={
+                "support_piers": _truss_pads(mesh),
+                "story_loads": story_loads,
+                "max_arrows": 16,
+                "story": {
+                    "support_label": "PIN SUPPORTS  ·  four corners",
+                    "load_label": copy["load_label"],
+                    "caption": copy["caption"],
+                },
+            },
+            connectivity_seeds=seeds,
+            require_connectivity=True,
+            prune_dead_ends=True,
+        )
+    raise ValueError("Problem must be 'cantilever', 'bridge', or 'truss'")

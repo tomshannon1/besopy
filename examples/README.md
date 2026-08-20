@@ -8,6 +8,7 @@ surface history.
 source .venv/bin/activate
 ./examples/cantilever.sh
 ./examples/bridge.sh
+./examples/truss.sh
 ```
 
 ## Cantilever
@@ -42,4 +43,22 @@ Other placements:
 beso --problem bridge --load-placement convoy \
   --nelx 16 --nely 4 --nelz 6 --volume 0.32 \
   --max-iterations 50 --snapshot-every 1 --output output/examples/bridge-fast
+```
+
+## Truss
+
+A 3D Michell space frame. The four bottom corners are pinned; nothing else
+on the base is held. The default load is a **centre** roof joint — one hanging
+mass at the top of the box. Dead-end members are pruned, so the result is a
+frame from the pins to the load rather than a solid block.
+
+Other placements:
+
+- `offset` — the load on one roof edge (bending plus torsion)
+- `span` — two joints along the roof ridge
+
+```bash
+beso --problem truss --load-placement center \
+  --nelx 12 --nely 8 --nelz 8 --volume 0.18 \
+  --max-iterations 60 --snapshot-every 1 --output output/examples/truss-fast
 ```

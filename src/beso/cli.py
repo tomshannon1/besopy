@@ -37,10 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--problem",
-        choices=("cantilever", "bridge"),
+        choices=("cantilever", "bridge", "truss"),
         default="cantilever",
         help="cantilever: clamped wall and free-end load. "
-        "bridge: two abutments and traffic on a live deck",
+        "bridge: two abutments and traffic on a live deck. "
+        "truss: four corner pins and a Michell roof load",
     )
     parser.add_argument("--nelx", type=int, default=24)
     parser.add_argument("--nely", type=int, default=6)
@@ -68,7 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
         "free-end bottom-edge; face-center is the Euler-Bernoulli point load. "
         "Bridge defaults to convoy (three axles on the centre lane); "
         "deck spreads traffic along the roadway, eccentric loads one fascia, "
-        "and midspan is the textbook single axle line",
+        "and midspan is the textbook single axle line. "
+        "Truss defaults to a centre roof joint; offset loads one edge, "
+        "and span puts two joints on the ridge",
     )
     parser.add_argument("--max-iterations", type=int, default=100)
     parser.add_argument(
@@ -228,6 +231,7 @@ def main(arguments: list[str] | None = None) -> int:
             passive_solid=coarse_problem.passive_solid,
             connectivity_seeds=coarse_problem.connectivity_seeds,
             require_connectivity=coarse_problem.require_connectivity,
+            prune_dead_ends=coarse_problem.prune_dead_ends,
         )
         coarse_result = coarse_optimizer.run(
             coarse_load_case.forces,
@@ -274,6 +278,7 @@ def main(arguments: list[str] | None = None) -> int:
         passive_solid=problem.passive_solid,
         connectivity_seeds=problem.connectivity_seeds,
         require_connectivity=problem.require_connectivity,
+        prune_dead_ends=problem.prune_dead_ends,
     )
     start_densities = (
         np.asarray(initial_densities, dtype=float)
