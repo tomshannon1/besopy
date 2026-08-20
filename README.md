@@ -16,7 +16,7 @@ tested Python package while preserving the thesis method.
 - Isotropic linear-elastic finite-element analysis with 2x2x2 Gauss integration
 - Sparse global stiffness assembly and sparse direct solution
 - Compliance-based soft-kill BESO with spatial and iteration filtering
-- A cantilever benchmark and command-line interface
+- A cantilever benchmark, a Xie-style 3D bridge, and a command-line interface
 - ParaView-compatible VTK output
 - Numerical checks against Euler-Bernoulli beam theory
 
@@ -66,7 +66,43 @@ The output directory contains:
 - `summary.json`: parameters, convergence state, displacement, compliance, and
   detailed assembly/solve/postprocessing timing
 
+Add `--snapshot-every 1` to write a smoothed STL at the solid starting beam and
+every later iteration, plus `index.html` for playback:
+
+```bash
+beso \
+  --nelx 40 --nely 12 --nelz 20 \
+  --length 40 --width 12 --height 20 \
+  --volume 0.15 \
+  --young-modulus 200e9 --poisson-ratio 0.4 \
+  --load -1000 --evolution-rate 0.01 \
+  --filter-mode node --filter-radius 1.5 \
+  --max-iterations 250 \
+  --snapshot-every 1 \
+  --output output/cantilever-history
+python -m http.server --directory output/cantilever-history 8000
+```
+
 Run `beso --help` for all mesh, material, load, filter, and convergence options.
+
+## Examples
+
+The thesis cantilever and a Xie-style bridge live in `examples/`. They write
+STL iteration history and an HTML viewer:
+
+```bash
+./examples/cantilever.sh
+./examples/bridge.sh
+python -m http.server --directory output/examples/bridge 8000
+```
+
+`--problem bridge` fixes both bottom end-edges as abutments, keeps a live
+top-layer deck, and by default puts a three-axle convoy on the centre
+roadway. The usual result is an arch or truss between the piers. Use
+`--load-placement deck` for distributed traffic, `eccentric` for a fascia
+load, or `midspan` for the textbook single axle. See `examples/README.md`
+for the faster smoke commands.
+
 
 ## Printable STL
 
@@ -102,6 +138,17 @@ beso-optimize-domain output/imported \
   --load-body 2 --vertical-load -1 --lateral-load 0.3
 ```
 
+Add `--snapshot-every 1` to write a smoothed STL at the initial design and every
+iteration. Open the HTML scrubber over HTTP so the browser can load those
+surfaces:
+
+```bash
+python -m http.server --directory output/optimized 8000
+```
+
+Then visit `http://localhost:8000/index.html` and press Play. The viewer shows
+the marching-cubes STL sequence, not the voxel grid.
+
 The VTK and watertight STL outputs retain material only inside the imported
 shape. Loads are normalized comparative inputs unless calibrated engineering
 loads and material properties are supplied.
@@ -127,7 +174,7 @@ decisions.
 
 ## Current limitations
 
-- The CLI currently provides one cantilever load case and one material.
+- The CLI currently provides cantilever and bridge load cases and one material.
 - The optimizer returns the lowest-compliance near-target iteration because a
   discrete voxel design cannot always represent the requested fraction exactly.
   The actual fraction is always reported in `summary.json`.
@@ -136,7 +183,8 @@ decisions.
   correctness priority.
 - STL watertightness is checked, but minimum wall thickness, overhangs, and
   printer-specific tolerances still need validation in a slicer.
-- There is no graphical model editor or in-process 3D viewer yet.
+- There is no graphical model editor. Iteration history can be scrubbed in a
+  local HTML viewer after `--snapshot-every` is used.
 
 ## Improvement roadmap
 

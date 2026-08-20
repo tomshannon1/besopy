@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from .fea import FiniteElementSolver
+from .history import SurfaceHistory, build_overlay
 from .io import write_vtk
 from .mesh import StructuredMesh
 from .optimizer import BESOOptimizer, IterationRecord
@@ -46,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-iterations", type=int, default=100)
     parser.add_argument("--surface-sigma", type=float, default=0.7)
     parser.add_argument("--surface-smoothing-iterations", type=int, default=10)
+    parser.add_argument(
+        "--snapshot-every",
+        type=int,
+        default=0,
+        help="Write a smoothed STL every N iterations (0 disables history export)",
+    )
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -128,8 +135,38 @@ def main(arguments: list[str] | None = None) -> int:
         prune_dead_ends=args.prune_dead_ends,
     )
     recent_durations: deque[float] = deque(maxlen=5)
+    args.output.mkdir(parents=True, exist_ok=True)
+    history = SurfaceHistory(
+        args.output,
+        mesh,
+        every=args.snapshot_every,
+        sigma=args.surface_sigma,
+        smoothing_iterations=args.surface_smoothing_iterations,
+        overlay=build_overlay(
+            mesh,
+            forces=forces,
+            sensitivity_kind="element",
+            support_points=mesh.coordinates[contact_nodes],
+            max_arrows=12,
+        ),
+    )
 
-    def report(record: IterationRecord, _densities: object) -> None:
+    def report(
+        record: IterationRecord,
+        densities: object,
+        sensitivities: object = None,
+    ) -> None:
+        history.capture(
+            record.iteration,
+            np.asarray(densities, dtype=float),
+            volume_fraction=record.volume_fraction,
+            record=record,
+            sensitivities=(
+                None
+                if sensitivities is None
+                else np.asarray(sensitivities, dtype=float)
+            ),
+        )
         if args.quiet:
             return
         recent_durations.append(record.duration_seconds)
@@ -151,14 +188,27 @@ def main(arguments: list[str] | None = None) -> int:
             f"contact-nodes={len(contact_nodes):,} load-nodes={len(load_nodes):,}",
             flush=True,
         )
+    history.capture(
+        0,
+        domain.astype(float),
+        volume_fraction=1.0,
+    )
     result = optimizer.run(
         forces,
         fixed_dofs,
         initial_densities=domain.astype(float),
         callback=report,
     )
+    if history.enabled and result.history:
+        last = result.history[-1]
+        history.capture(
+            last.iteration,
+            result.densities,
+            volume_fraction=last.volume_fraction,
+            record=last,
+            force=True,
+        )
 
-    args.output.mkdir(parents=True, exist_ok=True)
     write_vtk(args.output / "design.vtk", mesh, result.densities)
     write_vtk(
         args.output / "design-solid.vtk",
@@ -205,11 +255,18 @@ def main(arguments: list[str] | None = None) -> int:
             "sigma": args.surface_sigma,
             "smoothing_iterations": args.surface_smoothing_iterations,
         },
+        "snapshot_every": args.snapshot_every,
+        "history_frames": len(history.frames),
     }
     (args.output / "summary.json").write_text(
         json.dumps(summary, indent=2) + "\n",
         encoding="utf-8",
     )
+    if history.frames and not args.quiet:
+        print(
+            f"history frames={len(history.frames)} viewer={args.output / 'index.html'}",
+            flush=True,
+        )
     if not args.quiet:
         print(
             f"finished elapsed={elapsed:.1f}s "

@@ -62,9 +62,11 @@ def test_node_filter_suppresses_checkerboard_sensitivities() -> None:
     )
     checkerboard = (np.arange(mesh.num_elements) % 2).astype(float)
 
-    filtered = optimizer._filter_sensitivities(checkerboard)
+    filtered, nodal = optimizer._filter_sensitivities(checkerboard)
 
     assert filtered.std() < checkerboard.std()
+    assert nodal is not None
+    assert nodal.shape == (mesh.num_nodes,)
 
 
 def test_optimizer_rejects_unknown_filter_mode() -> None:

@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>BESO surface history</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1b1d21; color: #e8eaed; font: 14px/1.4 system-ui, sans-serif; }
+    #c { position: fixed; inset: 0; }
+    #hud {
+      position: fixed; left: 16px; right: 148px; bottom: 16px;
+      background: rgba(12, 14, 18, 0.86); border: 1px solid #3a3f47;
+      border-radius: 12px; padding: 12px 16px; backdrop-filter: blur(8px);
+    }
+    #meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; align-items: center; }
+    input[type=range] { width: 100%; }
+    button {
+      background: #2c313a; color: white; border: 1px solid #454b55; border-radius: 8px;
+      padding: 6px 10px; cursor: pointer; font: inherit;
+    }
+    button.primary { background: #3d5afe; border-color: #3d5afe; }
+    button:hover { filter: brightness(1.12); }
+    .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+    .label { color: #9aa3ad; margin-right: 4px; }
+    .toggles { gap: 14px; }
+    .toggles label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+    .caption { margin-top: 6px; color: #9aa3ad; font-size: 12px; }
+    .warn { color: #ffb4a2; }
+    #legend {
+      display: none; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: #c5c7cc;
+    }
+    #legend .bar {
+      width: 92px; height: 8px; border-radius: 4px;
+      background: linear-gradient(90deg, #30123b, #3e5bff, #1ae4b6, #fde725, #ff6a00, #7a0403);
+    }
+    #joy {
+      position: fixed; right: 20px; bottom: 20px; width: 118px; height: 118px;
+      border-radius: 50%; border: 1px solid #3a3f47; background: rgba(12, 14, 18, 0.78);
+      touch-action: none; user-select: none;
+    }
+    #knob {
+      position: absolute; width: 42px; height: 42px; border-radius: 50%;
+      background: #3d5afe; left: 38px; top: 38px; pointer-events: none;
+    }
+    #joy-label {
+      position: fixed; right: 20px; bottom: 142px; width: 118px; text-align: center;
+      color: #9aa3ad; font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="joy-label">orbit joystick</div>
+  <div id="joy"><div id="knob"></div></div>
+  <div id="hud">
+    <div id="meta">
+      <div id="stats">Loading history…</div>
+      <button id="play" class="primary" type="button">Play</button>
+    </div>
+    <input id="slider" type="range" min="0" max="0" value="0" />
+    <div class="row">
+      <span class="label">view</span>
+      <button type="button" data-view="iso">Iso</button>
+      <button type="button" data-view="front">Front</button>
+      <button type="button" data-view="side">Side</button>
+      <button type="button" data-view="top">Top</button>
+      <button type="button" data-view="reset">Reset</button>
+      <span class="label" style="margin-left:8px">rotate</span>
+      <button type="button" data-orbit="x,-15">X−</button>
+      <button type="button" data-orbit="x,15">X+</button>
+      <button type="button" data-orbit="y,-15">Y−</button>
+      <button type="button" data-orbit="y,15">Y+</button>
+      <button type="button" data-orbit="z,-15">Z−</button>
+      <button type="button" data-orbit="z,15">Z+</button>
+      <button id="auto" type="button">Auto-spin</button>
+    </div>
+    <div class="row toggles">
+      <label><input id="show-setup" type="checkbox" checked /> Supports &amp; load</label>
+      <label><input id="show-loads" type="checkbox" /> Force arrows</label>
+      <label><input id="show-sens" type="checkbox" /> Node sensitivity</label>
+      <div id="legend"><span>low</span><div class="bar"></div><span>high</span></div>
+    </div>
+    <div id="setup-note" class="caption">Wall = nodes fixed in place. Hanging mass = where the force is applied.</div>
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { STLLoader } from "three/addons/loaders/STLLoader.js";
+
+    const stats = document.getElementById("stats");
+    const slider = document.getElementById("slider");
+    const play = document.getElementById("play");
+    const autoBtn = document.getElementById("auto");
+    const showSetup = document.getElementById("show-setup");
+    const showLoads = document.getElementById("show-loads");
+    const showSens = document.getElementById("show-sens");
+    const setupNote = document.getElementById("setup-note");
+    const legend = document.getElementById("legend");
+    const canvas = document.getElementById("c");
+    const joy = document.getElementById("joy");
+    const knob = document.getElementById("knob");
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1d21);
+    const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 5000);
+    camera.up.set(0, 0, 1);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    scene.add(new THREE.HemisphereLight(0xf0f4ff, 0x2a2a2a, 1.05));
+    const key = new THREE.DirectionalLight(0xffffff, 1.15);
+    key.position.set(80, 40, 120);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x9ecbff, 0.35);
+    fill.position.set(-60, -40, 40);
+    scene.add(fill);
+
+    const metal = new THREE.MeshStandardMaterial({
+      color: 0xc5c7cc, metalness: 0.08, roughness: 0.42, side: THREE.DoubleSide,
+    });
+    const heat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, metalness: 0.08, roughness: 0.46, side: THREE.DoubleSide, vertexColors: true,
+    });
+
+    let mesh = null;
+    let frames = [];
+    let overlay = {};
+    let index = 0;
+    let pending = 0;
+    let playing = false;
+    let spinning = false;
+    let last = 0;
+    let modelSize = 100;
+    let modelCenter = new THREE.Vector3();
+    let framed = false;
+    const geometries = new Map();
+    const fields = new Map();
+    const loader = new STLLoader();
+    const overlayGroup = new THREE.Group();
+    scene.add(overlayGroup);
+
+    function resize() {
+      const w = innerWidth, h = innerHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    addEventListener("resize", resize);
+    resize();
+
+    function setView(name) {
+      const c = modelCenter;
+      const s = modelSize;
+      const positions = {
+        iso: new THREE.Vector3(s, s * 0.75, s * 0.7),
+        front: new THREE.Vector3(s, 0, 0),
+        side: new THREE.Vector3(0, s, 0),
+        top: new THREE.Vector3(0, 0, s),
+        reset: new THREE.Vector3(s, s * 0.75, s * 0.7),
+      };
+      camera.up.set(0, 0, 1);
+      camera.position.copy(c).add(positions[name] || positions.iso);
+      controls.target.copy(c);
+      controls.update();
+    }
+
+    function orbit(axisName, degrees) {
+      const axes = {
+        x: new THREE.Vector3(1, 0, 0),
+        y: new THREE.Vector3(0, 1, 0),
+        z: new THREE.Vector3(0, 0, 1),
+      };
+      const q = new THREE.Quaternion().setFromAxisAngle(
+        axes[axisName],
+        THREE.MathUtils.degToRad(degrees),
+      );
+      camera.position.sub(controls.target).applyQuaternion(q).add(controls.target);
+      camera.up.applyQuaternion(q);
+      controls.update();
+    }
+
+    function frameCamera(geometry) {
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      const size = box.getSize(new THREE.Vector3());
+      modelSize = Math.max(size.length(), 1e-6);
+      modelCenter = box.getCenter(new THREE.Vector3());
+      camera.near = modelSize / 100;
+      camera.far = modelSize * 40;
+      camera.updateProjectionMatrix();
+      if (!framed) {
+        framed = true;
+        setView("iso");
+      }
+    }
+
+    function sampleField(data, shape, kind, dims, x, y, z) {
+      const [nx, ny, nz] = shape;
+      const [L, W, H] = dims;
+      let u, v, w;
+      if (kind === "node") {
+        u = (x / Math.max(L, 1e-12)) * (nx - 1);
+        v = (y / Math.max(W, 1e-12)) * (ny - 1);
+        w = (z / Math.max(H, 1e-12)) * (nz - 1);
+      } else {
+        u = (x / Math.max(L, 1e-12)) * nx - 0.5;
+        v = (y / Math.max(W, 1e-12)) * ny - 0.5;
+        w = (z / Math.max(H, 1e-12)) * nz - 0.5;
+      }
+      const x0 = Math.max(0, Math.min(nx - 1, Math.floor(u)));
+      const y0 = Math.max(0, Math.min(ny - 1, Math.floor(v)));
+      const z0 = Math.max(0, Math.min(nz - 1, Math.floor(w)));
+      const x1 = Math.max(0, Math.min(nx - 1, x0 + 1));
+      const y1 = Math.max(0, Math.min(ny - 1, y0 + 1));
+      const z1 = Math.max(0, Math.min(nz - 1, z0 + 1));
+      const tx = Math.min(1, Math.max(0, u - x0));
+      const ty = Math.min(1, Math.max(0, v - y0));
+      const tz = Math.min(1, Math.max(0, w - z0));
+      const at = (ix, iy, iz) => data[((ix * ny) + iy) * nz + iz];
+      const c00 = at(x0, y0, z0) * (1 - tz) + at(x0, y0, z1) * tz;
+      const c01 = at(x0, y1, z0) * (1 - tz) + at(x0, y1, z1) * tz;
+      const c10 = at(x1, y0, z0) * (1 - tz) + at(x1, y0, z1) * tz;
+      const c11 = at(x1, y1, z0) * (1 - tz) + at(x1, y1, z1) * tz;
+      const c0 = c00 * (1 - ty) + c01 * ty;
+      const c1 = c10 * (1 - ty) + c11 * ty;
+      return c0 * (1 - tx) + c1 * tx;
+    }
+
+    const TURBO = [
+      [0.1900, 0.0718, 0.2322],
+      [0.2719, 0.2266, 0.6270],
+      [0.2166, 0.4317, 0.8746],
+      [0.1324, 0.6425, 0.8189],
+      [0.1443, 0.7992, 0.5476],
+      [0.3537, 0.8648, 0.2468],
+      [0.6681, 0.8630, 0.1355],
+      [0.9064, 0.7723, 0.1373],
+      [0.9865, 0.5871, 0.1473],
+      [0.8889, 0.3138, 0.1632],
+      [0.6443, 0.0114, 0.1009],
+    ];
+    function heatColor(t) {
+      const x = Math.min(1, Math.max(0, t)) * (TURBO.length - 1);
+      const i = Math.min(TURBO.length - 2, Math.floor(x));
+      const f = x - i;
+      const a = TURBO[i];
+      const b = TURBO[i + 1];
+      return [
+        a[0] + (b[0] - a[0]) * f,
+        a[1] + (b[1] - a[1]) * f,
+        a[2] + (b[2] - a[2]) * f,
+      ];
+    }
+
+    function colorGeometry(geometry, field) {
+      const spec = overlay.sensitivity || {};
+      const shape = frames[index]?.sensitivity_shape || spec.shape;
+      const kind = spec.kind || "node";
+      const dims = overlay.mesh?.dimensions;
+      if (!field || !shape || !dims) return;
+      const pos = geometry.getAttribute("position");
+      const colors = new Float32Array(pos.count * 3);
+      const samples = new Float32Array(pos.count);
+      for (let i = 0; i < pos.count; i += 1) {
+        samples[i] = sampleField(field, shape, kind, dims, pos.getX(i), pos.getY(i), pos.getZ(i));
+      }
+      const sorted = Array.from(samples).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+      const lo = sorted[Math.floor(0.05 * (sorted.length - 1))] ?? 0;
+      const hi = sorted[Math.floor(0.95 * (sorted.length - 1))] ?? (lo + 1);
+      const span = Math.max(hi - lo, 1e-12);
+      for (let i = 0; i < pos.count; i += 1) {
+        const [r, g, b] = heatColor((samples[i] - lo) / span);
+        colors[i * 3] = r;
+        colors[i * 3 + 1] = g;
+        colors[i * 3 + 2] = b;
+      }
+      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    }
+
+    function clearOverlay() {
+      while (overlayGroup.children.length) {
+        const child = overlayGroup.children[0];
+        overlayGroup.remove(child);
+        child.traverse((node) => {
+          if (node.geometry) node.geometry.dispose();
+          const materials = node.material
+            ? (Array.isArray(node.material) ? node.material : [node.material])
+            : [];
+          materials.forEach((material) => {
+            if (material.map) material.map.dispose();
+            material.dispose();
+          });
+        });
+      }
+    }
+
+    function makeLabel(text, color = "#f8fafc") {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 96;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "rgba(12, 14, 18, 0.84)";
+      ctx.beginPath();
+      ctx.roundRect(8, 8, 496, 80, 18);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.font = "600 34px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 256, 50);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: texture, transparent: true, depthTest: false,
+      }));
+      sprite.scale.set(modelSize * 0.46, modelSize * 0.086, 1);
+      return sprite;
+    }
+
+    function wallTexture() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#8b95a1";
+      ctx.fillRect(0, 0, 128, 128);
+      ctx.strokeStyle = "#5f6872";
+      ctx.lineWidth = 3;
+      for (let i = 0; i <= 4; i += 1) {
+        ctx.beginPath(); ctx.moveTo(i * 32, 0); ctx.lineTo(i * 32, 128); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i * 32); ctx.lineTo(128, i * 32); ctx.stroke();
+      }
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(3, 3);
+      return texture;
+    }
+
+    function addStoryWall() {
+      const plane = overlay.support_plane;
+      if (!plane) return;
+      const u = (plane.extent_u || overlay.mesh?.dimensions?.[1] || modelSize * 0.3) * 1.75;
+      const v = (plane.extent_v || overlay.mesh?.dimensions?.[2] || modelSize * 0.3) * 1.75;
+      const thickness = Math.max(modelSize * 0.05, Math.min(u, v) * 0.1);
+      const geom = new THREE.BoxGeometry(thickness, u, v);
+      const wall = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
+        map: wallTexture(), color: 0xd7dde3, roughness: 0.94, metalness: 0.03,
+      }));
+      wall.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(geom),
+        new THREE.LineBasicMaterial({ color: 0x3b4148 }),
+      ));
+      const center = plane.center || [plane.value || 0, u / 2, v / 2];
+      if (plane.axis === "x") {
+        wall.position.set(center[0] - thickness / 2, center[1], center[2]);
+      } else if (plane.axis === "y") {
+        wall.rotation.z = Math.PI / 2;
+        wall.position.set(center[0], center[1] - thickness / 2, center[2]);
+      } else {
+        wall.rotation.y = Math.PI / 2;
+        wall.position.set(center[0], center[1], center[2] - thickness / 2);
+      }
+      overlayGroup.add(wall);
+      const label = makeLabel(overlay.story?.support_label || "FIXED WALL  ·  nodes clamped");
+      label.position.set(
+        plane.axis === "x" ? center[0] - thickness * 0.2 : center[0],
+        center[1],
+        center[2] + v * 0.58,
+      );
+      overlayGroup.add(label);
+    }
+
+    function addStoryPiers() {
+      const piers = overlay.support_piers || [];
+      if (!piers.length) return;
+      const mat = new THREE.MeshStandardMaterial({
+        map: wallTexture(), color: 0xd7dde3, roughness: 0.94, metalness: 0.03,
+      });
+      piers.forEach((pier) => {
+        const geom = new THREE.BoxGeometry(...pier.size);
+        const item = new THREE.Mesh(geom, mat);
+        item.position.set(...pier.center);
+        item.add(new THREE.LineSegments(
+          new THREE.EdgesGeometry(geom),
+          new THREE.LineBasicMaterial({ color: 0x3b4148 }),
+        ));
+        overlayGroup.add(item);
+      });
+      const first = piers[0];
+      const last = piers[piers.length - 1];
+      const label = makeLabel(overlay.story?.support_label || "ABUTMENTS  ·  piers fixed");
+      label.position.set(
+        (first.center[0] + last.center[0]) / 2,
+        first.center[1],
+        first.center[2] + first.size[2] * 0.9 + modelSize * 0.04,
+      );
+      overlayGroup.add(label);
+    }
+
+    function addStoryDeck() {
+      const deck = overlay.deck;
+      if (!deck) return;
+      const geom = new THREE.BoxGeometry(...deck.size);
+      const plate = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
+        color: 0x90caf9, transparent: true, opacity: 0.22,
+        roughness: 0.55, metalness: 0.08, depthWrite: false,
+      }));
+      plate.position.set(...deck.center);
+      overlayGroup.add(plate);
+    }
+
+    function addStoryGround() {
+      const points = overlay.support_points;
+      if (!points?.length || overlay.support_plane || overlay.support_piers?.length) return;
+      const box = new THREE.Box3();
+      points.forEach((point) => box.expandByPoint(new THREE.Vector3(...point)));
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const pad = Math.max(size.x, size.y, modelSize * 0.12) * 1.4;
+      const thickness = Math.max(modelSize * 0.02, 0.4);
+      const ground = new THREE.Mesh(
+        new THREE.BoxGeometry(pad, pad, thickness),
+        new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.9 }),
+      );
+      ground.position.set(center.x, center.y, box.min.z - thickness / 2);
+      overlayGroup.add(ground);
+      const pinGeom = new THREE.CylinderGeometry(modelSize * 0.01, modelSize * 0.01, modelSize * 0.05, 8);
+      const pinMat = new THREE.MeshStandardMaterial({ color: 0x4fc3f7 });
+      points.slice(0, 80).forEach((point) => {
+        const pin = new THREE.Mesh(pinGeom, pinMat);
+        pin.rotation.x = Math.PI / 2;
+        pin.position.set(point[0], point[1], point[2]);
+        overlayGroup.add(pin);
+      });
+      const label = makeLabel("FIXED  ·  support / contact");
+      label.position.set(center.x, center.y, box.min.z + modelSize * 0.12);
+      overlayGroup.add(label);
+    }
+
+    function addLoadMass(load, withLabel = true, count = 1) {
+      const origin = new THREE.Vector3(...load.position);
+      const direction = new THREE.Vector3(...load.direction);
+      if (direction.lengthSq() === 0) return;
+      direction.normalize();
+      const hang = modelSize * (count > 2 ? 0.14 : 0.18);
+      const size = modelSize * (count > 2 ? 0.055 : 0.075);
+      const rod = new THREE.Mesh(
+        new THREE.CylinderGeometry(size * 0.07, size * 0.07, hang, 10),
+        new THREE.MeshStandardMaterial({ color: 0xb0b6bd, metalness: 0.35, roughness: 0.4 }),
+      );
+      rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+      rod.position.copy(origin).addScaledVector(direction, hang / 2);
+      const mass = new THREE.Mesh(
+        new THREE.BoxGeometry(size, size, size),
+        new THREE.MeshStandardMaterial({ color: 0x2f3a44, metalness: 0.45, roughness: 0.32 }),
+      );
+      mass.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(mass.geometry),
+        new THREE.LineBasicMaterial({ color: 0x9aa3ad }),
+      ));
+      mass.position.copy(origin).addScaledVector(direction, hang + size * 0.55);
+      const hitch = new THREE.Mesh(
+        new THREE.SphereGeometry(size * 0.16, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0xff8a65, metalness: 0.2, roughness: 0.4 }),
+      );
+      hitch.position.copy(origin);
+      overlayGroup.add(rod, mass, hitch);
+      if (!withLabel) return;
+      const label = makeLabel(overlay.story?.load_label || "APPLIED LOAD  ·  free end", "#ffb4a2");
+      label.position.copy(mass.position).add(new THREE.Vector3(0, 0, size * 1.15));
+      overlayGroup.add(label);
+    }
+
+    function addLoadHitch(load) {
+      const hitch = new THREE.Mesh(
+        new THREE.SphereGeometry(modelSize * 0.018, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0xff8a65, metalness: 0.2, roughness: 0.4 }),
+      );
+      hitch.position.set(...load.position);
+      overlayGroup.add(hitch);
+    }
+
+    function storyLoads() {
+      if (overlay.story_loads?.length) return overlay.story_loads;
+      const loads = overlay.loads || [];
+      const resultants = loads.filter((load) => load.resultant);
+      return resultants.length ? resultants : loads.slice(0, 1);
+    }
+
+    function drawSetup() {
+      addStoryWall();
+      addStoryPiers();
+      addStoryDeck();
+      addStoryGround();
+      const masses = storyLoads();
+      const labelIndex = Math.floor(masses.length / 2);
+      masses.forEach((load, index) => addLoadMass(load, index === labelIndex, masses.length));
+      const nodes = (overlay.loads || []).filter((load) => !load.resultant);
+      if (nodes.length > 1) nodes.forEach(addLoadHitch);
+    }
+
+    function addArrow(origin, direction, magnitude, resultant) {
+      const dir = new THREE.Vector3(...direction);
+      if (dir.lengthSq() === 0) return;
+      dir.normalize();
+      const length = modelSize * (resultant ? 0.28 : 0.18);
+      const color = resultant ? 0xff8a65 : 0xff5252;
+      overlayGroup.add(new THREE.ArrowHelper(
+        dir, new THREE.Vector3(...origin), length, color, length * 0.28, length * 0.16,
+      ));
+    }
+
+    function drawTechnical() {
+      const loads = overlay.loads || [];
+      const nodes = loads.filter((load) => !load.resultant);
+      (nodes.length ? nodes : loads).forEach((load) => {
+        addArrow(load.position, load.direction, load.magnitude, false);
+      });
+    }
+
+    function drawOverlay() {
+      clearOverlay();
+      if (showSetup.checked) drawSetup();
+      if (showLoads.checked) drawTechnical();
+      setupNote.style.display = showSetup.checked ? "block" : "none";
+    }
+
+    async function loadGeom(i) {
+      if (geometries.has(i)) return geometries.get(i);
+      const geometry = await loader.loadAsync("./iterations/" + frames[i].stl);
+      geometry.computeVertexNormals();
+      geometry.computeBoundingBox();
+      geometries.set(i, geometry);
+      return geometry;
+    }
+
+    async function loadField(i) {
+      const name = frames[i]?.sensitivity;
+      if (!name) return null;
+      if (fields.has(i)) return fields.get(i);
+      const response = await fetch("./iterations/" + name);
+      if (!response.ok) return null;
+      const data = new Float32Array(await response.arrayBuffer());
+      fields.set(i, data);
+      return data;
+    }
+
+    function updateStats(frame) {
+      const compliance = frame.compliance == null ? "—" : Number(frame.compliance).toExponential(3);
+      stats.textContent =
+        `iter ${frame.iteration} / ${frames[frames.length - 1].iteration}   ` +
+        `volume ${(100 * frame.volume_fraction).toFixed(1)}%   ` +
+        `compliance ${compliance}   frames ${frames.length}`;
+    }
+
+    async function show(i) {
+      if (!frames.length) return;
+      pending = i;
+      const geometry = await loadGeom(i);
+      if (pending !== i) return;
+      index = i;
+      slider.value = String(i);
+      const field = showSens.checked ? await loadField(i) : null;
+      if (pending !== i) return;
+      if (field) colorGeometry(geometry, field);
+      if (mesh) scene.remove(mesh);
+      mesh = new THREE.Mesh(geometry, field && showSens.checked ? heat : metal);
+      scene.add(mesh);
+      frameCamera(geometry);
+      drawOverlay();
+      legend.style.display = field && showSens.checked ? "flex" : "none";
+      updateStats(frames[i]);
+      const next = (i + 1) % frames.length;
+      if (frames[next]) loadGeom(next);
+    }
+
+    function tick(t) {
+      requestAnimationFrame(tick);
+      if (playing && frames.length && t - last > 140) {
+        last = t;
+        show((index + 1) % frames.length);
+      }
+      if (spinning) orbit("z", 0.35);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    requestAnimationFrame(tick);
+
+    play.onclick = () => {
+      playing = !playing;
+      play.textContent = playing ? "Pause" : "Play";
+    };
+    autoBtn.onclick = () => {
+      spinning = !spinning;
+      autoBtn.classList.toggle("primary", spinning);
+    };
+    slider.oninput = () => show(Number(slider.value));
+    showSetup.onchange = () => drawOverlay();
+    showLoads.onchange = () => drawOverlay();
+    showSens.onchange = () => show(index);
+    document.querySelectorAll("[data-view]").forEach((button) => {
+      button.onclick = () => setView(button.dataset.view);
+    });
+    document.querySelectorAll("[data-orbit]").forEach((button) => {
+      button.onclick = () => {
+        const [axis, degrees] = button.dataset.orbit.split(",");
+        orbit(axis, Number(degrees));
+      };
+    });
+
+    let dragging = false;
+    function joyOffset(event) {
+      const rect = joy.getBoundingClientRect();
+      return {
+        x: event.clientX - (rect.left + rect.width / 2),
+        y: event.clientY - (rect.top + rect.height / 2),
+      };
+    }
+    function applyJoy(event) {
+      const { x, y } = joyOffset(event);
+      const radius = 38;
+      const len = Math.hypot(x, y) || 1;
+      const clamped = Math.min(len, radius);
+      const nx = (x / len) * clamped;
+      const ny = (y / len) * clamped;
+      knob.style.left = `${38 + nx}px`;
+      knob.style.top = `${38 + ny}px`;
+      orbit("z", -nx * 0.18);
+      orbit("x", ny * 0.18);
+    }
+    function resetJoy() {
+      dragging = false;
+      knob.style.left = "38px";
+      knob.style.top = "38px";
+    }
+    joy.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      joy.setPointerCapture(event.pointerId);
+      applyJoy(event);
+    });
+    joy.addEventListener("pointermove", (event) => { if (dragging) applyJoy(event); });
+    joy.addEventListener("pointerup", resetJoy);
+    joy.addEventListener("pointercancel", resetJoy);
+
+    addEventListener("keydown", (event) => {
+      if (event.target.matches("input")) return;
+      if (event.key === "ArrowLeft") orbit("z", 12);
+      if (event.key === "ArrowRight") orbit("z", -12);
+      if (event.key === "ArrowUp") orbit("x", 12);
+      if (event.key === "ArrowDown") orbit("x", -12);
+      if (event.key === "q") orbit("y", 12);
+      if (event.key === "e") orbit("y", -12);
+    });
+
+    async function readHistory() {
+      const response = await fetch("./history.json", { cache: "no-store" });
+      if (!response.ok) throw new Error("history.json missing — serve this folder over HTTP");
+      return response.json();
+    }
+
+    async function readOverlay() {
+      const response = await fetch("./overlay.json", { cache: "no-store" });
+      return response.ok ? response.json() : {};
+    }
+
+    const history = await readHistory().catch((error) => {
+      stats.innerHTML = `<span class="warn">${error.message}</span>`;
+      throw error;
+    });
+    frames = history.frames;
+    overlay = history.overlay || await readOverlay();
+    if (overlay.story?.caption) setupNote.textContent = overlay.story.caption;
+    const hasSensitivity = frames.some((frame) => frame.sensitivity) || Boolean(overlay.sensitivity);
+    if (!hasSensitivity) {
+      showSens.disabled = true;
+      showSens.parentElement.title = "This history has no sensitivity fields yet";
+    }
+    slider.max = String(Math.max(0, frames.length - 1));
+    await show(0);
+
+    setInterval(async () => {
+      try {
+        const next = await readHistory();
+        overlay = next.overlay || overlay;
+        if (next.frames.length === frames.length) return;
+        frames = next.frames;
+        slider.max = String(Math.max(0, frames.length - 1));
+        const nowHasSensitivity = frames.some((frame) => frame.sensitivity);
+        if (nowHasSensitivity) showSens.disabled = false;
+      } catch (error) {
+        console.warn(error);
+      }
+    }, 4000);
+  </script>
+</body>
+</html>

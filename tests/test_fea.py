@@ -29,7 +29,7 @@ def test_cantilever_deflects_in_the_load_direction() -> None:
     assert np.all(result.element_strain_energy >= -1e-12)
     np.testing.assert_allclose(
         result.compliance,
-        -result.displacements[load_case.load_dof],
+        result.displacements @ load_case.forces,
         rtol=1e-10,
     )
 
@@ -38,7 +38,7 @@ def test_cantilever_matches_euler_bernoulli_benchmark() -> None:
     length = 4.0
     young_modulus = 1000.0
     mesh = StructuredMesh(16, 4, 4, length=length, width=1.0, height=1.0)
-    load_case = cantilever_load_case(mesh, load=-1.0)
+    load_case = cantilever_load_case(mesh, load=-1.0, placement="face-center")
     result = FiniteElementSolver(mesh, young_modulus).solve(
         np.ones(mesh.num_elements),
         load_case.forces,
@@ -52,3 +52,19 @@ def test_cantilever_matches_euler_bernoulli_benchmark() -> None:
         beam_theory_displacement,
         rtol=0.05,
     )
+
+
+def test_cantilever_load_is_uniform_on_free_end_bottom_edge() -> None:
+    mesh = StructuredMesh(4, 3, 2, length=4.0, width=3.0, height=2.0)
+    load_case = cantilever_load_case(mesh, load=-8.0)
+
+    tip = mesh.nodes_on_x(mesh.length)
+    bottom = tip[np.isclose(mesh.coordinates[tip, 2], 0.0)]
+    nodal_forces = load_case.forces.reshape(-1, 3)
+    loaded = np.flatnonzero(np.linalg.norm(nodal_forces, axis=1) > 0)
+
+    assert len(bottom) == 4
+    np.testing.assert_array_equal(np.sort(loaded), np.sort(bottom))
+    np.testing.assert_allclose(nodal_forces[bottom, 2], -2.0)
+    np.testing.assert_allclose(nodal_forces[bottom, :2], 0.0)
+    np.testing.assert_array_equal(load_case.load_nodes, np.sort(bottom))

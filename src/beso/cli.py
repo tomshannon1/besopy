@@ -6,12 +6,16 @@ import time
 from collections import deque
 from pathlib import Path
 
+import numpy as np
+
 from .fea import FiniteElementSolver
+from .history import SurfaceHistory, build_overlay
 from .io import write_vtk
 from .mesh import StructuredMesh
 from .multiresolution import coarsen_shape, expand_design, resample_densities
 from .optimizer import BESOOptimizer, IterationRecord
-from .problems import cantilever_load_case
+from .problems import ALL_LOAD_PLACEMENTS, make_problem, resolve_load_placement
+from .surface import density_surface, write_binary_stl
 
 
 def _format_duration(seconds: float) -> str:
@@ -29,7 +33,14 @@ def _format_duration(seconds: float) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="beso",
-        description="Run 3D BESO topology optimization on a cantilever beam.",
+        description="Run 3D BESO topology optimization.",
+    )
+    parser.add_argument(
+        "--problem",
+        choices=("cantilever", "bridge"),
+        default="cantilever",
+        help="cantilever: clamped wall and free-end load. "
+        "bridge: two abutments and traffic on a live deck",
     )
     parser.add_argument("--nelx", type=int, default=24)
     parser.add_argument("--nely", type=int, default=6)
@@ -49,6 +60,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--young-modulus", type=float, default=1.0)
     parser.add_argument("--poisson-ratio", type=float, default=0.3)
     parser.add_argument("--load", type=float, default=-1.0)
+    parser.add_argument(
+        "--load-placement",
+        choices=ALL_LOAD_PLACEMENTS,
+        default=None,
+        help="Where the total load is applied. Cantilever defaults to the "
+        "free-end bottom-edge; face-center is the Euler-Bernoulli point load. "
+        "Bridge defaults to convoy (three axles on the centre lane); "
+        "deck spreads traffic along the roadway, eccentric loads one fascia, "
+        "and midspan is the textbook single axle line",
+    )
     parser.add_argument("--max-iterations", type=int, default=100)
     parser.add_argument(
         "--coarse-factor",
@@ -61,13 +82,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fine-mesh starting volume; defaults to twice the target volume",
     )
     parser.add_argument("--output", type=Path, default=Path("output"))
+    parser.add_argument(
+        "--snapshot-every",
+        type=int,
+        default=0,
+        help="Write a smoothed STL every N iterations (0 disables history export)",
+    )
+    parser.add_argument("--surface-sigma", type=float, default=0.7)
+    parser.add_argument("--surface-smoothing-iterations", type=int, default=10)
     parser.add_argument("--quiet", action="store_true")
     return parser
 
 
 def main(arguments: list[str] | None = None) -> int:
     total_started_at = time.perf_counter()
-    args = build_parser().parse_args(arguments)
+    parser = build_parser()
+    args = parser.parse_args(arguments)
+    try:
+        args.load_placement = resolve_load_placement(args.problem, args.load_placement)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     def emit(message: str) -> None:
         if not args.quiet:
@@ -82,16 +116,54 @@ def main(arguments: list[str] | None = None) -> int:
         height=args.height,
     )
     emit(
-        f"mesh={mesh.nelx}x{mesh.nely}x{mesh.nelz} "
+        f"problem={args.problem} mesh={mesh.nelx}x{mesh.nely}x{mesh.nelz} "
         f"elements={mesh.num_elements:,} nodes={mesh.num_nodes:,} "
         f"dofs={mesh.num_dofs:,} target-volume={args.volume:.3f} "
         f"max-iterations={args.max_iterations}"
+    )
+    args.output.mkdir(parents=True, exist_ok=True)
+    sensitivity_kind = "node" if args.filter_mode == "node" else "element"
+    problem = make_problem(
+        args.problem,
+        mesh,
+        load=args.load,
+        load_placement=args.load_placement,
+    )
+    load_case = problem.load_case
+    history = SurfaceHistory(
+        args.output,
+        mesh,
+        every=args.snapshot_every,
+        sigma=args.surface_sigma,
+        smoothing_iterations=args.surface_smoothing_iterations,
+        overlay=build_overlay(
+            mesh,
+            forces=load_case.forces,
+            sensitivity_kind=sensitivity_kind,
+            **problem.overlay_kwargs,
+        ),
     )
 
     def make_report(phase: str, max_iterations: int):
         recent_durations: deque[float] = deque(maxlen=5)
 
-        def report(record: IterationRecord, _densities: object) -> None:
+        def report(
+            record: IterationRecord,
+            densities: object,
+            sensitivities: object = None,
+        ) -> None:
+            if phase == "fine":
+                history.capture(
+                    record.iteration,
+                    np.asarray(densities, dtype=float),
+                    volume_fraction=record.volume_fraction,
+                    record=record,
+                    sensitivities=(
+                        None
+                        if sensitivities is None
+                        else np.asarray(sensitivities, dtype=float)
+                    ),
+                )
             recent_durations.append(record.duration_seconds)
             average_duration = sum(recent_durations) / len(recent_durations)
             remaining_iterations = max_iterations - record.iteration
@@ -134,7 +206,13 @@ def main(arguments: list[str] | None = None) -> int:
             f"elements={coarse_mesh.num_elements:,} dofs={coarse_mesh.num_dofs:,}"
         )
         emit("starting coarse optimization...")
-        coarse_load_case = cantilever_load_case(coarse_mesh, load=args.load)
+        coarse_problem = make_problem(
+            args.problem,
+            coarse_mesh,
+            load=args.load,
+            load_placement=args.load_placement,
+        )
+        coarse_load_case = coarse_problem.load_case
         coarse_solver = FiniteElementSolver(
             coarse_mesh,
             young_modulus=args.young_modulus,
@@ -147,6 +225,9 @@ def main(arguments: list[str] | None = None) -> int:
             filter_radius=args.filter_radius,
             filter_mode=args.filter_mode,
             max_iterations=args.max_iterations,
+            passive_solid=coarse_problem.passive_solid,
+            connectivity_seeds=coarse_problem.connectivity_seeds,
+            require_connectivity=coarse_problem.require_connectivity,
         )
         coarse_result = coarse_optimizer.run(
             coarse_load_case.forces,
@@ -178,7 +259,6 @@ def main(arguments: list[str] | None = None) -> int:
         )
 
     emit("starting fine optimization...")
-    load_case = cantilever_load_case(mesh, load=args.load)
     solver = FiniteElementSolver(
         mesh,
         young_modulus=args.young_modulus,
@@ -191,7 +271,16 @@ def main(arguments: list[str] | None = None) -> int:
         filter_radius=args.filter_radius,
         filter_mode=args.filter_mode,
         max_iterations=args.max_iterations,
+        passive_solid=problem.passive_solid,
+        connectivity_seeds=problem.connectivity_seeds,
+        require_connectivity=problem.require_connectivity,
     )
+    start_densities = (
+        np.asarray(initial_densities, dtype=float)
+        if initial_densities is not None
+        else np.ones(mesh.num_elements, dtype=float)
+    )
+    history.capture(0, start_densities, volume_fraction=float(start_densities.mean()))
 
     result = optimizer.run(
         load_case.forces,
@@ -199,7 +288,6 @@ def main(arguments: list[str] | None = None) -> int:
         initial_densities=initial_densities,
         callback=make_report("fine", args.max_iterations),
     )
-    args.output.mkdir(parents=True, exist_ok=True)
     write_vtk(args.output / "design.vtk", mesh, result.densities)
     write_vtk(
         args.output / "design-solid.vtk",
@@ -207,6 +295,22 @@ def main(arguments: list[str] | None = None) -> int:
         result.densities,
         active_only=True,
     )
+    if history.enabled:
+        last = result.history[-1]
+        history.capture(
+            last.iteration,
+            result.densities,
+            volume_fraction=last.volume_fraction,
+            record=last,
+            force=True,
+        )
+        surface = density_surface(
+            mesh,
+            result.densities,
+            sigma=args.surface_sigma,
+            smoothing_iterations=args.surface_smoothing_iterations,
+        )
+        write_binary_stl(args.output / "design-smoothed.stl", surface)
     total_elapsed_seconds = time.perf_counter() - total_started_at
 
     def timing_totals(history: tuple[IterationRecord, ...]) -> dict[str, float]:
@@ -223,6 +327,7 @@ def main(arguments: list[str] | None = None) -> int:
 
     summary = {
         "mode": "multiresolution" if coarse_result is not None else "single-resolution",
+        "problem": args.problem,
         "filter": {
             "mode": args.filter_mode,
             "radius": args.filter_radius,
@@ -238,6 +343,11 @@ def main(arguments: list[str] | None = None) -> int:
         "volume_fraction": float(result.densities.mean()),
         "compliance": result.analysis.compliance,
         "tip_displacement": float(result.analysis.displacements[load_case.load_dof]),
+        "load": {
+            "total": args.load,
+            "placement": args.load_placement,
+            "nodes": len(load_case.load_nodes),
+        },
         "mesh": {
             "elements": [mesh.nelx, mesh.nely, mesh.nelz],
             "dimensions": [mesh.length, mesh.width, mesh.height],
@@ -245,6 +355,8 @@ def main(arguments: list[str] | None = None) -> int:
             "node_count": mesh.num_nodes,
             "dof_count": mesh.num_dofs,
         },
+        "history_frames": len(history.frames),
+        "snapshot_every": args.snapshot_every,
         "history": [
             {
                 "iteration": record.iteration,
@@ -286,6 +398,10 @@ def main(arguments: list[str] | None = None) -> int:
         f"compliance={result.analysis.compliance:.6g}"
     )
     emit(f"wrote {args.output / 'design-solid.vtk'}")
+    if history.frames:
+        emit(
+            f"history frames={len(history.frames)} viewer={args.output / 'index.html'}"
+        )
     return 0
 
 

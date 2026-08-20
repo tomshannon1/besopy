@@ -97,6 +97,9 @@ class StructuredMesh:
     def nodes_on_x(self, x: float, *, atol: float = 1e-12) -> NDArray[np.int64]:
         return np.flatnonzero(np.isclose(self.coordinates[:, 0], x, atol=atol))
 
+    def nodes_on_z(self, z: float, *, atol: float = 1e-12) -> NDArray[np.int64]:
+        return np.flatnonzero(np.isclose(self.coordinates[:, 2], z, atol=atol))
+
     def fixed_dofs_at_x(self, x: float = 0.0) -> NDArray[np.int64]:
         nodes = self.nodes_on_x(x)
         return (3 * nodes[:, None] + np.arange(3)).reshape(-1)

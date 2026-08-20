@@ -105,3 +105,43 @@ def test_cli_runs_multiresolution_warm_start(tmp_path, capsys) -> None:
     assert (output / "coarse-design-solid.vtk").exists()
     assert (output / "design-solid.vtk").exists()
     assert capsys.readouterr().out == ""
+
+
+def test_cli_runs_bridge_problem(tmp_path) -> None:
+    output = tmp_path / "bridge"
+    exit_code = main(
+        [
+            "--problem",
+            "bridge",
+            "--nelx",
+            "8",
+            "--nely",
+            "2",
+            "--nelz",
+            "3",
+            "--volume",
+            "0.5",
+            "--evolution-rate",
+            "0.5",
+            "--max-iterations",
+            "2",
+            "--snapshot-every",
+            "1",
+            "--surface-sigma",
+            "0.2",
+            "--surface-smoothing-iterations",
+            "1",
+            "--output",
+            str(output),
+            "--quiet",
+        ]
+    )
+    assert exit_code == 0
+    summary = json.loads((output / "summary.json").read_text())
+    history = json.loads((output / "history.json").read_text())
+    assert summary["problem"] == "bridge"
+    assert summary["load"]["placement"] == "convoy"
+    assert history["overlay"]["support_piers"]
+    assert history["overlay"]["deck"]
+    assert len(history["overlay"]["story_loads"]) == 3
+    assert (output / "iterations" / "000.stl").exists()

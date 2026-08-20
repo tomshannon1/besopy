@@ -147,9 +147,10 @@ class BESOOptimizer:
 
     def _filter_sensitivities(
         self, sensitivities: NDArray[np.float64]
-    ) -> NDArray[np.float64]:
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64] | None]:
         if self.filter_mode == "element":
-            return np.asarray(self._filter @ sensitivities).reshape(-1)
+            filtered = np.asarray(self._filter @ sensitivities).reshape(-1)
+            return filtered, None
 
         nodal_sensitivities = np.zeros(self.solver.mesh.num_nodes, dtype=float)
         np.add.at(
@@ -159,7 +160,9 @@ class BESOOptimizer:
         )
         nodal_sensitivities /= 8.0
         filtered_nodes = np.asarray(self._filter @ nodal_sensitivities).reshape(-1)
-        return filtered_nodes[self.solver.mesh.connectivity].mean(axis=1)
+        return filtered_nodes[self.solver.mesh.connectivity].mean(
+            axis=1
+        ), filtered_nodes
 
     def _select_design(
         self, sensitivities: NDArray[np.float64], volume_fraction: float
@@ -223,7 +226,7 @@ class BESOOptimizer:
         fixed_dofs: NDArray[np.int64],
         *,
         initial_densities: NDArray[np.float64] | None = None,
-        callback: Callable[[IterationRecord, NDArray[np.float64]], None] | None = None,
+        callback: Callable[..., None] | None = None,
     ) -> OptimizationResult:
         if initial_densities is None:
             densities = self.design_domain.astype(float)
@@ -236,6 +239,7 @@ class BESOOptimizer:
             densities[~self.design_domain] = 0.0
             densities[self.passive_solid] = 1.0
         previous_sensitivities: NDArray[np.float64] | None = None
+        previous_nodal_sensitivities: NDArray[np.float64] | None = None
         compliance_history: list[float] = []
         records: list[IterationRecord] = []
         converged = False
@@ -262,10 +266,25 @@ class BESOOptimizer:
             )
             raw_sensitivities = stiffness_factors * analysis.element_strain_energy
             raw_sensitivities[~self.design_domain] = 0.0
-            sensitivities = self._filter_sensitivities(raw_sensitivities)
+            sensitivities, nodal_sensitivities = self._filter_sensitivities(
+                raw_sensitivities
+            )
             if previous_sensitivities is not None:
                 sensitivities = 0.5 * (sensitivities + previous_sensitivities)
+            if (
+                nodal_sensitivities is not None
+                and previous_nodal_sensitivities is not None
+            ):
+                nodal_sensitivities = 0.5 * (
+                    nodal_sensitivities + previous_nodal_sensitivities
+                )
             previous_sensitivities = sensitivities
+            previous_nodal_sensitivities = nodal_sensitivities
+            visualization_field = (
+                nodal_sensitivities
+                if nodal_sensitivities is not None
+                else sensitivities
+            )
 
             next_volume_fraction = max(
                 self.target_volume_fraction,
@@ -300,7 +319,7 @@ class BESOOptimizer:
             compliance_history.append(analysis.compliance)
             densities = next_densities
             if callback is not None:
-                callback(record, densities.copy())
+                callback(record, densities.copy(), visualization_field.copy())
 
             if self._has_converged(
                 compliance_history, self._volume_fraction(densities)
