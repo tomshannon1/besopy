@@ -10,6 +10,7 @@ from scipy import sparse
 from scipy.spatial import cKDTree
 
 from .fea import FiniteElementSolver, StaticResult
+from .topology_constraints import enforce_printable_topology
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,12 @@ class BESOOptimizer:
         filter_mode: str = "element",
         convergence_tolerance: float = 1e-3,
         max_iterations: int = 100,
+        design_domain: NDArray[np.bool_] | None = None,
+        passive_solid: NDArray[np.bool_] | None = None,
+        connectivity_seeds: NDArray[np.bool_] | None = None,
+        min_thickness_voxels: int = 1,
+        require_connectivity: bool = False,
+        prune_dead_ends: bool = False,
     ) -> None:
         if not 0 < target_volume_fraction <= 1:
             raise ValueError("Target volume fraction must be in (0, 1]")
@@ -62,6 +69,8 @@ class BESOOptimizer:
             raise ValueError("Convergence tolerance must be positive")
         if max_iterations < 1:
             raise ValueError("At least one iteration is required")
+        if min_thickness_voxels < 1:
+            raise ValueError("Minimum thickness must be at least one voxel")
 
         self.solver = solver
         self.target_volume_fraction = target_volume_fraction
@@ -70,6 +79,39 @@ class BESOOptimizer:
         self.filter_mode = filter_mode
         self.convergence_tolerance = convergence_tolerance
         self.max_iterations = max_iterations
+        element_count = self.solver.mesh.num_elements
+        self.design_domain = (
+            np.ones(element_count, dtype=bool)
+            if design_domain is None
+            else np.asarray(design_domain, dtype=bool).reshape(-1).copy()
+        )
+        self.passive_solid = (
+            np.zeros(element_count, dtype=bool)
+            if passive_solid is None
+            else np.asarray(passive_solid, dtype=bool).reshape(-1).copy()
+        )
+        if self.design_domain.shape != (element_count,):
+            raise ValueError("Design domain requires one value per element")
+        if self.passive_solid.shape != (element_count,):
+            raise ValueError("Passive-solid mask requires one value per element")
+        if not np.all(self.passive_solid <= self.design_domain):
+            raise ValueError("Passive solids must lie inside the design domain")
+        self.connectivity_seeds = (
+            self.passive_solid.copy()
+            if connectivity_seeds is None
+            else np.asarray(connectivity_seeds, dtype=bool).reshape(-1).copy()
+        )
+        if self.connectivity_seeds.shape != (element_count,):
+            raise ValueError("Connectivity seeds require one value per element")
+        self.min_thickness_voxels = min_thickness_voxels
+        self.require_connectivity = require_connectivity
+        self.prune_dead_ends = prune_dead_ends
+        self.domain_element_count = int(self.design_domain.sum())
+        if self.domain_element_count == 0:
+            raise ValueError("Design domain cannot be empty")
+        target_count = round(self.target_volume_fraction * self.domain_element_count)
+        if int(self.passive_solid.sum()) > target_count:
+            raise ValueError("Passive solids exceed the target material volume")
         self._filter = self._build_filter()
 
     def _build_filter(self) -> sparse.csr_matrix:
@@ -86,6 +128,12 @@ class BESOOptimizer:
         columns: list[int] = []
         values: list[float] = []
         for row, neighbors in enumerate(neighborhoods):
+            if self.filter_mode == "element":
+                neighbors = [
+                    neighbor for neighbor in neighbors if self.design_domain[neighbor]
+                ]
+                if not neighbors:
+                    neighbors = [row]
             distances = np.linalg.norm(locations[neighbors] - locations[row], axis=1)
             weights = np.maximum(0.0, radius - distances)
             weights /= weights.sum()
@@ -119,19 +167,46 @@ class BESOOptimizer:
         solid_count = max(
             1,
             min(
-                self.solver.mesh.num_elements,
-                round(volume_fraction * self.solver.mesh.num_elements),
+                self.domain_element_count,
+                round(volume_fraction * self.domain_element_count),
             ),
         )
-        order = np.argsort(sensitivities, kind="stable")
         design = np.zeros(self.solver.mesh.num_elements, dtype=float)
-        design[order[-solid_count:]] = 1.0
+        design[self.passive_solid] = 1.0
+        selectable = np.flatnonzero(self.design_domain & ~self.passive_solid)
+        remaining_count = solid_count - int(self.passive_solid.sum())
+        if remaining_count > 0:
+            order = selectable[np.argsort(sensitivities[selectable], kind="stable")]
+            design[order[-remaining_count:]] = 1.0
+        if (
+            self.min_thickness_voxels > 1
+            or self.require_connectivity
+            or self.prune_dead_ends
+        ):
+            mesh = self.solver.mesh
+            design = enforce_printable_topology(
+                design,
+                sensitivities,
+                shape=(mesh.nelx, mesh.nely, mesh.nelz),
+                domain=self.design_domain,
+                passive=self.passive_solid,
+                seeds=self.connectivity_seeds | self.passive_solid,
+                min_thickness_voxels=self.min_thickness_voxels,
+                target_count=solid_count,
+                require_connectivity=self.require_connectivity,
+                prune=self.prune_dead_ends,
+            )
+            design[~self.design_domain] = 0.0
+            design[self.passive_solid] = 1.0
         return design
+
+    def _volume_fraction(self, densities: NDArray[np.float64]) -> float:
+        return float(np.asarray(densities)[self.design_domain].mean())
 
     def _has_converged(
         self, compliance_history: list[float], volume_fraction: float
     ) -> bool:
-        volume_tolerance = 1.5 / self.solver.mesh.num_elements
+        volume_tolerance = 1.5 / self.domain_element_count
         if (
             volume_fraction > self.target_volume_fraction + volume_tolerance
             or len(compliance_history) < 10
@@ -151,26 +226,31 @@ class BESOOptimizer:
         callback: Callable[[IterationRecord, NDArray[np.float64]], None] | None = None,
     ) -> OptimizationResult:
         if initial_densities is None:
-            densities = np.ones(self.solver.mesh.num_elements, dtype=float)
+            densities = self.design_domain.astype(float)
         else:
             densities = np.asarray(initial_densities, dtype=float).reshape(-1).copy()
             if densities.shape != (self.solver.mesh.num_elements,):
                 raise ValueError("Initial design requires one density per element")
             if np.any((densities < 0) | (densities > 1)):
                 raise ValueError("Initial densities must lie between zero and one")
+            densities[~self.design_domain] = 0.0
+            densities[self.passive_solid] = 1.0
         previous_sensitivities: NDArray[np.float64] | None = None
         compliance_history: list[float] = []
         records: list[IterationRecord] = []
         converged = False
         best_densities: NDArray[np.float64] | None = None
         best_analysis: StaticResult | None = None
-        target_tolerance = 1.5 / self.solver.mesh.num_elements
+        target_tolerance = 1.5 / self.domain_element_count
         started_at = time.perf_counter()
 
         for iteration in range(1, self.max_iterations + 1):
             iteration_started_at = time.perf_counter()
             analysis = self.solver.solve(densities, forces, fixed_dofs)
-            if densities.mean() <= self.target_volume_fraction + target_tolerance and (
+            current_volume_fraction = self._volume_fraction(densities)
+            if current_volume_fraction <= (
+                self.target_volume_fraction + target_tolerance
+            ) and (
                 best_analysis is None or analysis.compliance < best_analysis.compliance
             ):
                 best_densities = densities.copy()
@@ -181,6 +261,7 @@ class BESOOptimizer:
                 * densities**self.solver.penalization
             )
             raw_sensitivities = stiffness_factors * analysis.element_strain_energy
+            raw_sensitivities[~self.design_domain] = 0.0
             sensitivities = self._filter_sensitivities(raw_sensitivities)
             if previous_sensitivities is not None:
                 sensitivities = 0.5 * (sensitivities + previous_sensitivities)
@@ -188,7 +269,7 @@ class BESOOptimizer:
 
             next_volume_fraction = max(
                 self.target_volume_fraction,
-                densities.mean() * (1.0 - self.evolution_rate),
+                current_volume_fraction * (1.0 - self.evolution_rate),
             )
             next_densities = self._select_design(sensitivities, next_volume_fraction)
             iteration_finished_at = time.perf_counter()
@@ -200,7 +281,7 @@ class BESOOptimizer:
             record = IterationRecord(
                 iteration=iteration,
                 compliance=analysis.compliance,
-                volume_fraction=float(next_densities.mean()),
+                volume_fraction=self._volume_fraction(next_densities),
                 changed_elements=int(np.count_nonzero(next_densities != densities)),
                 duration_seconds=iteration_finished_at - iteration_started_at,
                 elapsed_seconds=iteration_finished_at - started_at,
@@ -221,12 +302,16 @@ class BESOOptimizer:
             if callback is not None:
                 callback(record, densities.copy())
 
-            if self._has_converged(compliance_history, densities.mean()):
+            if self._has_converged(
+                compliance_history, self._volume_fraction(densities)
+            ):
                 converged = True
                 break
 
         final_analysis = self.solver.solve(densities, forces, fixed_dofs)
-        if densities.mean() <= self.target_volume_fraction + target_tolerance and (
+        if self._volume_fraction(densities) <= (
+            self.target_volume_fraction + target_tolerance
+        ) and (
             best_analysis is None
             or final_analysis.compliance < best_analysis.compliance
         ):

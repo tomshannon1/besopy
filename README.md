@@ -83,6 +83,29 @@ fragments, verifies that the result is watertight, and writes
 finish. Physical dimensions become STL dimensions, so use millimetres when
 configuring a design intended for printing.
 
+## Optimize an existing STL
+
+Import a watertight STL as a connected voxel design domain:
+
+```bash
+beso-import-stl model.stl --pitch 4 --output output/imported
+```
+
+The import stores the complete domain and separate masks for disconnected STL
+bodies. Optimize it while preserving selected bodies and bottom contact layers:
+
+```bash
+beso-optimize-domain output/imported \
+  --output output/optimized \
+  --volume 0.70 \
+  --protect-body 2 --protect-bottom-layers 2 \
+  --load-body 2 --vertical-load -1 --lateral-load 0.3
+```
+
+The VTK and watertight STL outputs retain material only inside the imported
+shape. Loads are normalized comparative inputs unless calibrated engineering
+loads and material properties are supplied.
+
 ## Validation
 
 The test suite checks mesh connectivity, element rigid-body modes, stiffness

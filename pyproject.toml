@@ -12,6 +12,7 @@ dependencies = [
   "numpy>=2.0",
   "scikit-image>=0.26",
   "scipy>=1.14",
+  "trimesh>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +23,8 @@ dev = [
 
 [project.scripts]
 beso = "beso.cli:main"
+beso-import-stl = "beso.import_cli:main"
+beso-optimize-domain = "beso.domain_cli:main"
 beso-surface = "beso.surface_cli:main"
 
 [tool.hatch.build.targets.wheel]

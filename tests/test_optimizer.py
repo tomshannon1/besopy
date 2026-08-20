@@ -76,3 +76,26 @@ def test_optimizer_rejects_unknown_filter_mode() -> None:
             target_volume_fraction=0.5,
             filter_mode="unknown",
         )
+
+
+def test_optimizer_respects_design_domain_and_passive_solids() -> None:
+    mesh = StructuredMesh(4, 2, 2, length=2.0, width=1.0, height=1.0)
+    load_case = cantilever_load_case(mesh)
+    domain = np.zeros(mesh.num_elements, dtype=bool)
+    domain[:12] = True
+    passive = np.zeros(mesh.num_elements, dtype=bool)
+    passive[[0, 1]] = True
+    optimizer = BESOOptimizer(
+        FiniteElementSolver(mesh, young_modulus=1.0),
+        target_volume_fraction=0.5,
+        evolution_rate=0.5,
+        max_iterations=2,
+        design_domain=domain,
+        passive_solid=passive,
+    )
+
+    result = optimizer.run(load_case.forces, load_case.fixed_dofs)
+
+    assert result.densities[domain].mean() == 0.5
+    assert np.all(result.densities[passive] == 1.0)
+    assert np.all(result.densities[~domain] == 0.0)
